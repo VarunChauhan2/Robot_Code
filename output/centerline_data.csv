@@ -1,0 +1,11 @@
+Image,Centerline_Angle (degrees),Distance_From_Center (pixels),Turn_Detected,Turn_Type,Curvature,Timestamp
+photo_1.jpg,91.47,-60.05,False,straight,0.391967,2026-03-02T13:32:31.379167
+photo_10.jpg,81.77,179.57,False,straight,0.614958,2026-03-02T13:32:31.412286
+photo_2.jpg,97.88,78.93,False,straight,0.094183,2026-03-02T13:32:31.436459
+photo_3.jpg,87.84,239.02,True,left_turn,1.373961,2026-03-02T13:32:31.458743
+photo_4.jpg,78.41,-158.21,True,left_turn,22.641275,2026-03-02T13:32:31.488641
+photo_5.jpg,89.14,-304.10,True,left_turn,39.952915,2026-03-02T13:32:31.535968
+photo_6.jpg,97.13,-40.25,True,left_turn,44.087261,2026-03-02T13:32:31.566856
+photo_7.jpg,89.51,-50.67,True,left_turn,55.141273,2026-03-02T13:32:31.600980
+photo_8.jpg,73.33,-211.65,True,left_turn,1.962604,2026-03-02T13:32:31.623913
+photo_9.jpg,64.06,102.92,False,straight,0.128809,2026-03-02T13:32:31.643956
