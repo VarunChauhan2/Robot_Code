@@ -67,27 +67,23 @@ void loop() {
 
     case 2: // ARC LEFT (90 DEGREE)
       executeArc(200, 0.4, true); // Outer speed 200, Ratio 0.4
-      lastError = 0;
       currentCommand = 1; // Return to following
       break;
 
     case 3: // ARC RIGHT (90 DEGREE)
       executeArc(200, 0.4, false);
-      lastError = 0;
       currentCommand = 1;
       break;
 
     case 4: // GRAB SEQUENCE
       stopMotors();
       executeGripper(true);
-      lastError = 0;
       currentCommand = 0;
       break;
 
     case 5: // DROP SEQUENCE
       stopMotors();
       executeGripper(false);
-      lastError = 0;
       currentCommand = 0;
       break;
 
@@ -103,13 +99,16 @@ void receiveEvent(int howMany) {
   
   // Follow command case
   if (howMany == 3) {
-    currentCommand = Wire.read();
+    int cmd = Wire.read();
+    // Reset error if switching into Follow Mode
+    if (cmd == 1 && currentCommand != 1) lastError = 0;
+
+    currentCommand = cmd;
     i2cOffset = Wire.read();
     i2cDirection = Wire.read();
   } else if (howMany == 1) {
     // Other commands
     currentCommand = Wire.read();
-    if (currentCommand == 1) lastError = 0; // Reset for fresh PD start
   }
 }
 
@@ -136,19 +135,25 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
   int innerSpeed = outerSpeed * ratio;
   float angleZ = 0;
   unsigned long lastTime = millis();
+  bool lineFound = false; // checker for turn optimization
 
-  while (abs(angleZ) < 90.0) {
-    sensors_event_t a, g, temp; 
+  while (abs(angleZ) < 90.0 && !lineFound) {
+    sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
-
+    
     unsigned long now = millis();
-    float dt = (now - lastTime) / 1000.0; 
+    float dt = (now - lastTime) / 1000.0;
     lastTime = now;
-    angleZ += (g.gyro.z * 57.2958) * dt; // Convert rad/s to deg/s 
+    angleZ += (g.gyro.z * 57.2958) * dt;
 
     if (isLeft) moveMotors(innerSpeed, outerSpeed);
     else moveMotors(outerSpeed, innerSpeed);
+
+    // Early exit if CV finds the next line after 65 degrees
+    if (abs(angleZ) > 65.0 && Wire.available()) {
+      if (Wire.peek() == 1) lineFound = true;
   }
+  lastError = 0;
   stopMotors();
 }
 
@@ -170,8 +175,8 @@ void moveMotors(int left, int right) {
   
   if (maxVal > 255) {
     float scale = 255.0 / maxVal;
-    left = left * scale;
-    right = right * scale;
+    left *= scale;
+    right *= scale;
   }
 
   // 2. Now apply the scaled (and ratio-preserved) speeds
