@@ -8,8 +8,8 @@ int pwma = 6; int ain1 = 7; int ain2 = 8;
 // Motor B (Left)
 int pwmb = 5; int bin1 = 2; int bin2 = 3;
 // Servos 
-Servo gripperServo; // Pin 9
-Servo liftServo;    // Pin 10
+Servo gripperServo; // Pin 10
+Servo liftServo;    // Pin 11
 
 // IMU
 Adafruit_MPU6050 mpu;
@@ -34,8 +34,8 @@ void setup() {
   pinMode(pwmb, OUTPUT); pinMode(bin1, OUTPUT); pinMode(bin2, OUTPUT);
 
   // Initialize Servos 
-  gripperServo.attach(9);
-  liftServo.attach(10); 
+  gripperServo.attach(10);
+  liftServo.attach(11); 
 
   // Initialize I2C from Pi
   Wire.begin(ARDUINO_I2C_ADDR); // initialize I2C address of Arduino to be seen from Pi
