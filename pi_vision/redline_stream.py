@@ -235,7 +235,7 @@ def run_stream(camera_index=0, curvature_threshold=30):
     cap.set(cv.CAP_PROP_FRAME_HEIGHT, 480)
     
     # Set frame rate
-    cap.set(cv.CAP_PROP_FPS, 30)
+    cap.set(cv.CAP_PROP_FPS, 15)
     
     print("Starting video stream from camera...")
     print("Press 'q' to quit\n")
@@ -279,7 +279,7 @@ def run_stream(camera_index=0, curvature_threshold=30):
             # cv.imshow('Red Line Detection Stream', frame)
             
             # Check for 'q' key to quit
-            if cv.waitKey(1) & 0xFF == ord('q'):
+            if cv.waitKey(67) & 0xFF == ord('q'):
                 break
     
     except KeyboardInterrupt:
