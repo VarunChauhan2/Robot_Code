@@ -178,7 +178,15 @@ def find_tape_edges(lines):
     
     return left_line, right_line
 
-def process_batch(input_dir="sample_images", output_dir="output", curvature_threshold=0.003):
+def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
+    # If directories not specified, use paths relative to script location
+    if input_dir is None:
+        input_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample_images")
+    if output_dir is None:
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+
+    print(f"Looking for input directory: {input_dir}")
+    print(f"Output directory: {output_dir}")
 
     # Create output directory if it doesn't exist
     if not os.path.exists(output_dir):
@@ -220,9 +228,13 @@ def process_batch(input_dir="sample_images", output_dir="output", curvature_thre
         frame = cv.resize(img, (854, 480))
         frame_height, frame_width = frame.shape[:2]
         
-        # ===== TURN DETECTION ON FULL FRAME =====
+        # ===== TURN DETECTION ON TOP 2/3 OF FRAME =====
+        # Crop to top 2/3 of frame for turn detection
+        crop_turn_bottom = 2 * frame_height // 3
+        frame_turn = frame[:crop_turn_bottom, :]
+        
         # Convert to HSV to detect red color
-        hsv_full = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
+        hsv_full = cv.cvtColor(frame_turn, cv.COLOR_BGR2HSV)
         
         # Define HSV range for red color
         red_lower = np.array([0, 100, 100])
@@ -230,20 +242,20 @@ def process_batch(input_dir="sample_images", output_dir="output", curvature_thre
         red_lower_2 = np.array([160, 100, 100])
         red_upper_2 = np.array([180, 255, 255])
         
-        # Create masks for red ranges on full frame
+        # Create masks for red ranges on cropped frame
         mask1_full = cv.inRange(hsv_full, red_lower, red_upper)
         mask2_full = cv.inRange(hsv_full, red_lower_2, red_upper_2)
         mask_full = cv.bitwise_or(mask1_full, mask2_full)
         
-        # Detect edges and lines on full frame
-        red_regions_full = cv.bitwise_and(frame, frame, mask=mask_full)
+        # Detect edges and lines on cropped frame
+        red_regions_full = cv.bitwise_and(frame_turn, frame_turn, mask=mask_full)
         gray_full = cv.cvtColor(red_regions_full, cv.COLOR_BGR2GRAY)
         edges_full = cv.Canny(gray_full, 50, 150)
         
         lines_full = cv.HoughLinesP(edges_full, 1, np.pi / 180, threshold=50, minLineLength=50, maxLineGap=10)
         
-        # Detect curved turn using full frame centerline sampling
-        is_turn, turn_type, curvature, fit_points, fit_coeffs = detect_curved_turn(frame, mask_full, curvature_threshold)
+        # Detect curved turn using cropped frame centerline sampling
+        is_turn, turn_type, curvature, fit_points, fit_coeffs = detect_curved_turn(frame_turn, mask_full, curvature_threshold)
         if is_turn:
             on_turn_detected(turn_type, curvature)
         
@@ -385,4 +397,10 @@ if __name__ == "__main__":
     # - Lower values (e.g., 0.001): More sensitive, detects slight curves
     # - Higher values (e.g., 0.005): Less sensitive, only sharp turns detected
     # Default is 0.003
-    process_batch("sample_images", "output", curvature_threshold=0.7)
+    
+    # Get the directory where this script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    input_dir = os.path.join(script_dir, "sample_images")
+    output_dir = os.path.join(script_dir, "output")
+    
+    process_batch(input_dir, output_dir, curvature_threshold=30)

@@ -3,7 +3,11 @@ import numpy as np
 import time
 import os
 
-def take_photos_on_keypress(output_dir="sample_images"):
+def take_photos_on_keypress(output_dir=None):
+    # If no output directory specified, use sample_images in the script's directory
+    if output_dir is None:
+        output_dir = os.path.join(os.path.dirname(__file__), "sample_images")
+    
     # Create output directory if it doesn't exist
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -30,7 +34,18 @@ def take_photos_on_keypress(output_dir="sample_images"):
     for _ in range(30):
         cap.read()
     
+    # Find the next available photo number
     photo_count = 0
+    if os.path.exists(output_dir):
+        existing_files = os.listdir(output_dir)
+        for file in existing_files:
+            if file.startswith("photo_") and file.endswith(".jpg"):
+                try:
+                    num = int(file[6:-4])  # Extract number from "photo_X.jpg"
+                    photo_count = max(photo_count, num)
+                except ValueError:
+                    pass
+    
     print("Press any key to capture a photo, press 'q' to quit")
     
     while True:
