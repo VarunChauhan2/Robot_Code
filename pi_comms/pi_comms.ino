@@ -3,8 +3,10 @@
 // I2C address
 #define I2C_ADDR 0x8
 
-// Received data variable
-volatile int receivedOffset = 0;
+// Received data variables
+volatile byte receivedMode = 0;
+volatile byte receivedOffset = 0;
+volatile byte receivedDirection = 0;
 volatile bool dataReceived = false;
 volatile int receiveCount = 0;
 
@@ -41,11 +43,15 @@ void loop() {
     dataReceived = false;
     receiveCount++;
     
-    // Print received offset to serial monitor
+    // Print received data to serial monitor
     Serial.print("[");
     Serial.print(receiveCount);
-    Serial.print("] Received offset: ");
-    Serial.println(receivedOffset);
+    Serial.print("] Mode: ");
+    Serial.print(receivedMode);
+    Serial.print(" | Offset: ");
+    Serial.print(receivedOffset);
+    Serial.print(" | Direction: ");
+    Serial.println(receivedDirection == 1 ? "LEFT" : "RIGHT");
   }
   
   delay(10);
@@ -57,17 +63,35 @@ void receiveEvent(int numBytes) {
   Serial.print(numBytes);
   Serial.println(" bytes");
   
-  // Read all available bytes
-  while (Wire.available()) {
+  // Skip the register address byte (first byte from write_i2c_block_data)
+  if (Wire.available()) {
+    byte registerAddr = Wire.read();
+    Serial.print("    Register: ");
+    Serial.println(registerAddr);
+  }
+  
+  // Read 3 bytes: mode, offset, direction
+  if (Wire.available()) {
+    receivedMode = Wire.read();
+    Serial.print("    Byte 1 (Mode): ");
+    Serial.println(receivedMode);
+  }
+  
+  if (Wire.available()) {
     receivedOffset = Wire.read();
-    
-    // Convert unsigned byte to signed integer
-    if (receivedOffset > 127) {
-      receivedOffset = receivedOffset - 256;
-    }
-    
-    Serial.print("    Raw byte read, signed value: ");
+    Serial.print("    Byte 2 (Offset): ");
     Serial.println(receivedOffset);
+  }
+  
+  if (Wire.available()) {
+    receivedDirection = Wire.read();
+    Serial.print("    Byte 3 (Direction): ");
+    Serial.println(receivedDirection);
+  }
+  
+  // Clear any remaining bytes
+  while (Wire.available()) {
+    Wire.read();
   }
   
   dataReceived = true;
