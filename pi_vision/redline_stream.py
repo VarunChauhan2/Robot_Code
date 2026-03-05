@@ -75,33 +75,17 @@ def get_horizontal_distance(center_x, center_y, cx1, cy1, cx2, cy2):
     # Positive means centerline is to the right, negative means to the left
     return centerline_x - center_x
 
-def send_i2c_data(centerline_angle, centerline_distance, is_turn, turn_type):
-    """Send vision results over I2C bus to Arduino."""
+def send_i2c_data(centerline_distance):
+    """Send horizontal offset over I2C bus to Arduino."""
     if bus is None:
         return
     
     try:
-        # Pack data into bytes for I2C transmission
-        # Byte 0: Angle (0-180 degrees, scaled)
-        # Byte 1: Distance (0-255, centered at 128)
-        # Byte 2: Turn indicator (0=straight, 1=left_turn, 2=right_turn)
-        
-        if centerline_angle is not None:
-            angle_byte = int(np.clip((centerline_angle + 90) / 2, 0, 255))
-        else:
-            angle_byte = 127  # Center/unknown
-        
-        if centerline_distance is not None:
-            # Scale distance: if distance is -427 to +427 pixels, map to 0-255
-            distance_scaled = int(np.clip((centerline_distance / 427 * 127) + 128, 0, 255))
-        else:
-            distance_scaled = 128  # Center/unknown
-        
-        turn_byte = 0 if not is_turn else (1 if turn_type == 'left_turn' else 2)
-        
-        # Send as block data: register 0x00, then 3 bytes of data
-        data = [angle_byte, distance_scaled, turn_byte]
-        bus.write_block_data(I2C_ADDR, 0x00, data)
+        # Send offset as a signed integer
+        offset = int(centerline_distance) if centerline_distance is not None else 0
+        # Clamp to signed byte range (-128 to 127)
+        offset = int(np.clip(offset, -128, 127))
+        bus.write_byte(I2C_ADDR, offset)
     except Exception as e:
         print(f"  I2C transmission error: {e}")
 
@@ -312,12 +296,12 @@ def run_stream(camera_index=0, curvature_threshold=30):
                       f"H-Dist: {centerline_distance:7.2f}px | "
                       f"Status: {'TURN (' + turn_type + ')' if is_turn else 'STRAIGHT':<20} | "
                       f"Curve: {curvature:.4f}")
-                # Send data over I2C
-                send_i2c_data(centerline_angle, centerline_distance, is_turn, turn_type)
+                # Send offset over I2C
+                send_i2c_data(centerline_distance)
             else:
                 print(f"[{timestamp}] Frame {frame_count} | No red line detected")
-                # Still send I2C update with no-signal values
-                send_i2c_data(None, None, False, 'straight')
+                # Send zero offset when no line detected
+                send_i2c_data(0)
             
             # Display frame (optional, can be slow on Pi)
             # cv.imshow('Red Line Detection Stream', frame)
