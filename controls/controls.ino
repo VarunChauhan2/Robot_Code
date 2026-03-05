@@ -4,7 +4,7 @@
 #include <Servo.h>
 
 // Motor A (Right)
-int pwma = 6; int ain1 = 7; int ain2 = 8;
+int pwma = 6; int ain2 = 7; int ain1 = 8;
 // Motor B (Left)
 int pwmb = 5; int bin1 = 2; int bin2 = 3;
 // Servos 
@@ -16,8 +16,8 @@ Adafruit_MPU6050 mpu;
 
 const int ARDUINO_I2C_ADDR = 0x08; // Arduino I2C Address
 int baseSpeed = 150; // motor speed 
-float Kp = 1.2; // Proportional control variable
-float Kd = 0.5; // Derivative Control Variable
+float Kp = 0.5; // Proportional control variable
+float Kd = 0; // Derivative Control Variable
 int lastError = 0; // error tracking variable
 unsigned long lastHeartbeat = 0; // safety variable to check if instructions are being received from Pi
 
@@ -36,6 +36,9 @@ void setup() {
   // Initialize Servos 
   gripperServo.attach(10);
   liftServo.attach(11); 
+
+  liftServo.write(30);
+  gripperServo.write(10);
 
   // Initialize I2C from Pi
   Wire.begin(ARDUINO_I2C_ADDR); // initialize I2C address of Arduino to be seen from Pi
@@ -96,9 +99,11 @@ void loop() {
 // I2C Communication Handler
 void receiveEvent(int howMany) {
   lastHeartbeat = millis();
-  
+  int flush;
+
   // Follow command case
-  if (howMany == 3) {
+  if (howMany == 4) {
+    flush = Wire.read();
     int cmd = Wire.read();
     // Reset error if switching into Follow Mode
     if (cmd == 1 && currentCommand != 1) lastError = 0;
@@ -106,8 +111,9 @@ void receiveEvent(int howMany) {
     currentCommand = cmd;
     i2cOffset = Wire.read();
     i2cDirection = Wire.read();
-  } else if (howMany == 1) {
+  } else if (howMany == 2) {
     // Other commands
+    flush = Wire.read();
     currentCommand = Wire.read();
   }
 }
@@ -121,7 +127,7 @@ void requestEvent() {
 
 // Control & Movement Functions
 void runPDLogic(int offset, int dir) {
-  float currentError = (dir == 0) ? offset : -offset; // error value
+  float currentError = (dir == 1) ? offset : -offset; // error value
   
   float derivative = currentError - lastError; // Derivative control value
   int adjustment = (currentError * Kp) + (derivative * Kd); // PD adjustment
@@ -152,6 +158,7 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
     // Early exit if CV finds the next line after 65 degrees
     if (abs(angleZ) > 65.0 && Wire.available()) {
       if (Wire.peek() == 1) lineFound = true;
+    }
   }
   lastError = 0;
   stopMotors();

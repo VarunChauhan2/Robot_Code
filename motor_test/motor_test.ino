@@ -2,8 +2,8 @@
 #include <Adafruit_Sensor.h>
 
 int pwma = 6;
-int ain1 = 7;
-int ain2 = 8;
+int ain2 = 7;
+int ain1 = 8;
 int pwmb = 5; 
 int bin1 = 2; 
 int bin2 = 3; 
@@ -35,7 +35,7 @@ void loop() {
   unsigned long lastTime = millis();
 
   while (abs(angleZ) < 90.0) {
-    sensors_event_t a, g, temp;
+    /*sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
     
     unsigned long now = millis();
@@ -45,7 +45,16 @@ void loop() {
 
     Serial.println(angleZ);
 
-    moveMotors(innerSpeed, 150);
+    moveMotors(innerSpeed, 150);*/
+
+    moveMotors(100, 0);
+    delay(500);
+    moveMotors(0, 0);
+    delay(500);
+    moveMotors(0, 100);
+    delay(500);
+    moveMotors(0, 0);
+    delay(500);
   }
 
   moveMotors(0, 0);
