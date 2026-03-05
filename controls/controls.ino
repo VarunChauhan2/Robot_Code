@@ -143,6 +143,8 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
   unsigned long lastTime = millis();
   bool lineFound = false; // checker for turn optimization
 
+  delay(6000); // temp delay before new mount
+
   while (abs(angleZ) < 90.0 && !lineFound) {
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
