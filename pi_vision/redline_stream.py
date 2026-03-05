@@ -76,16 +76,24 @@ def get_horizontal_distance(center_x, center_y, cx1, cy1, cx2, cy2):
     return centerline_x - center_x
 
 def send_i2c_data(centerline_distance):
-    """Send horizontal offset over I2C bus to Arduino."""
+    """Send horizontal offset over I2C bus to Arduino in format (mode, offset, direction)."""
     if bus is None:
         return
     
     try:
-        # Send offset as a signed integer
-        offset = int(centerline_distance) if centerline_distance is not None else 0
-        # Clamp to signed byte range (-128 to 127)
-        offset = int(np.clip(offset, -128, 127))
-        bus.write_byte(I2C_ADDR, offset)
+        # Default values if no distance detected
+        if centerline_distance is None:
+            offset = 0
+            direction = 0  # 0 = right (neutral)
+        else:
+            # Direction: 1 = left (positive offset), 0 = right (negative offset)
+            direction = 1 if centerline_distance > 0 else 0
+            # Offset is absolute value of distance, clamped to byte range (0-255)
+            offset = int(np.clip(abs(centerline_distance), 0, 255))
+        
+        # Send 3 bytes directly: (mode=1, offset, direction)
+        data = [1, offset, direction]
+        bus.write_i2c_block_data(I2C_ADDR, 0, data)
     except Exception as e:
         print(f"  I2C transmission error: {e}")
 

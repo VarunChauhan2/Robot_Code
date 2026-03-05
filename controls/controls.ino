@@ -24,7 +24,7 @@ unsigned long lastHeartbeat = 0; // safety variable to check if instructions are
 // Shared variables for I2C data
 volatile int currentCommand = 0; // command from Pi based on CV information (state of the system)
 volatile int i2cOffset = 0; // offset data from Pi
-volatile int i2cDirection = 0; // direction of offset
+volatile int i2cDirection = 0; // direction of offset; 1 = left, 0 = right
 
 void setup() {
   Serial.begin(115200);
@@ -121,7 +121,7 @@ void requestEvent() {
 
 // Control & Movement Functions
 void runPDLogic(int offset, int dir) {
-  float currentError = (dir == 1) ? offset : -offset; // error value
+  float currentError = (dir == 0) ? offset : -offset; // error value
   
   float derivative = currentError - lastError; // Derivative control value
   int adjustment = (currentError * Kp) + (derivative * Kd); // PD adjustment
