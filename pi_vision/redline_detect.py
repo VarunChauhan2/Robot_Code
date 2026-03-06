@@ -403,4 +403,4 @@ if __name__ == "__main__":
     input_dir = os.path.join(script_dir, "sample_images")
     output_dir = os.path.join(script_dir, "output")
     
-    process_batch(input_dir, output_dir, curvature_threshold=30)
+    process_batch(input_dir, output_dir, curvature_threshold=100)
