@@ -145,7 +145,7 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
 
   delay(6000); // temp delay before new mount
 
-  while (abs(angleZ) < 90.0 && !lineFound) {
+  while (abs(angleZ) < 90.0) {
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
     
@@ -154,13 +154,17 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
     lastTime = now;
     angleZ += (g.gyro.z * 57.2958) * dt;
 
+    Serial.println(angleZ);
+
     if (isLeft) moveMotors(innerSpeed, outerSpeed);
     else moveMotors(outerSpeed, innerSpeed);
 
+    /*
     // Early exit if CV finds the next line after 65 degrees
     if (abs(angleZ) > 65.0 && Wire.available()) {
       if (Wire.peek() == 1) lineFound = true;
     }
+    */
   }
   lastError = 0;
   stopMotors();
@@ -189,10 +193,10 @@ void moveMotors(int left, int right) {
   }
 
   // 2. Now apply the scaled (and ratio-preserved) speeds
-  digitalWrite(ain1, HIGH); digitalWrite(ain2, LOW);
+  digitalWrite(ain1, LOW); digitalWrite(ain2, HIGH);
   analogWrite(pwma, constrain(right, 0, 255));
   
-  digitalWrite(bin1, HIGH); digitalWrite(bin2, LOW);
+  digitalWrite(bin1, LOW); digitalWrite(bin2, HIGH);
   analogWrite(pwmb, constrain(left, 0, 255));
 }
 

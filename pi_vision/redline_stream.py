@@ -2,13 +2,17 @@ import cv2 as cv
 import numpy as np
 import time
 from datetime import datetime
-from smbus2 import SMBus
 
 # I2C configuration
 I2C_ADDR = 0x8  # Arduino address
 I2C_BUS = 1     # /dev/i2c-1
+
 try:
+    from smbus2 import SMBus
     bus = SMBus(I2C_BUS)
+except ImportError:
+    print(f"Warning: smbus2 module not available (OK if not on Raspberry Pi)")
+    bus = None
 except Exception as e:
     print(f"Warning: Could not initialize I2C bus: {e}")
     bus = None
