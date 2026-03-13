@@ -26,14 +26,75 @@ def point_to_line_distance(px, py, x1, y1, x2, y2):
     
     return numerator / denominator
 
-def detect_curved_turn(frame, mask, curvature_threshold=0.003):
+def get_robust_centerline(mask, frame_height, frame_width, num_samples=20):
     """
-    Detect curved turns by analyzing the rate of change of the centerline's x-position.
+    Extract centerline by sampling the tape width at multiple y-positions.
+    More robust to uneven edges and fragmentation.
+    
+    Args:
+        mask: Binary mask of detected red areas
+        frame_height, frame_width: Frame dimensions
+        num_samples: Number of y-positions to sample
+    
+    Returns:
+        centerline_points: Array of [x, y] points along centerline, or None if insufficient data
+    """
+    centerline_points = []
+    
+    for y in range(0, frame_height, max(1, frame_height // num_samples)):
+        row = mask[y, :]
+        red_x = np.where(row > 0)[0]
+        
+        if len(red_x) > 0:
+            x_min = red_x[0]
+            x_max = red_x[-1]
+            tape_width = x_max - x_min
+            
+            # Reject if tape is unreasonably wide (noise) or too narrow
+            if 3 < tape_width < frame_width * 0.8:
+                x_center = (x_min + x_max) / 2
+                centerline_points.append([x_center, y])
+    
+    return np.array(centerline_points, dtype=np.float32) if centerline_points else None
+
+def fit_centerline_curve(centerline_points):
+    """
+    Fit a polynomial curve through centerline points.
+    Better for uneven/curved tape edges.
+    
+    Args:
+        centerline_points: Array of [x, y] points along the centerline
+    
+    Returns:
+        tuple: (poly, angle_at_mid) - polynomial fit and angle at middle point
+    """
+    if centerline_points is None or len(centerline_points) < 3:
+        return None, None
+    
+    try:
+        # Fit 2nd order polynomial (parabola) for smooth curves
+        coeffs = np.polyfit(centerline_points[:, 1], centerline_points[:, 0], 2)
+        poly = np.poly1d(coeffs)
+        
+        # Get angle at middle point (more representative than endpoints)
+        y_mid = centerline_points[len(centerline_points)//2, 1]
+        angle_at_mid = np.arctan(poly.deriv()(y_mid))
+        
+        return poly, np.degrees(angle_at_mid)
+    except Exception as e:
+        print(f"  Error fitting centerline curve: {e}")
+        return None, None
+
+def detect_curved_turn_adaptive(frame, mask, adaptive_threshold=True, base_threshold=0.003):
+    """
+    Improved turn detection that adapts to tape width variations.
+    Detects curved turns by analyzing the rate of change of the centerline's x-position.
     
     Args:
         frame: The full image frame
         mask: Red color mask of the frame
-        curvature_threshold: Threshold for rate of change (default 0.003)
+        adaptive_threshold: Whether to adapt threshold based on tape width
+        base_threshold: Base curvature threshold (default 0.003)
     
     Returns:
         tuple: (is_turn, turn_type, curvature, centerline_pts, fit_coeffs)
@@ -41,47 +102,47 @@ def detect_curved_turn(frame, mask, curvature_threshold=0.003):
             - turn_type: String describing turn type ('left_turn', 'right_turn', 'straight')
             - curvature: The rate of change metric
             - centerline_pts: Array of centerline points used for fitting (for visualization)
-            - fit_coeffs: None (not used with this method)
+            - fit_coeffs: Polynomial coefficients or None
     """
     height, width = frame.shape[:2]
     centerline_points = []
+    tape_widths = []
     
     # Sample the tape centerline at different heights
     for y in range(0, height, max(1, height // 20)):  # Sample ~20 points across height
         row = mask[y, :]
-        
-        # Find all x-coordinates where red color is detected in this row
         red_x = np.where(row > 0)[0]
         
         if len(red_x) > 0:
-            # Calculate the centerline as the middle of the red region
-            x_min = red_x[0]
-            x_max = red_x[-1]
-            x_center = (x_min + x_max) / 2
-            centerline_points.append([x_center, y])
+            x_min, x_max = red_x[0], red_x[-1]
+            tape_width = x_max - x_min
+            tape_widths.append(tape_width)
+            centerline_points.append([(x_min + x_max) / 2, y])
     
     if len(centerline_points) < 3:
         return False, 'straight', 0.0, None, None
     
     centerline_points = np.array(centerline_points, dtype=np.float32)
+    tape_widths = np.array(tape_widths)
     
     try:
         # Calculate the rate of change of x position as we go down the centerline
-        x_changes = np.diff(centerline_points[:, 0])  # Change in x between consecutive points
-        
-        # The curvature metric is the variance of x-changes
-        # High variance = the x position is changing inconsistently = curve
+        x_changes = np.diff(centerline_points[:, 0])
         curvature = np.var(x_changes)
         
-        # Determine turn direction based on the overall x-movement trend
-        # Since top of image is front of robot, moving forward down the image:
-        # If x increases (moves right) = left turn
-        # If x decreases (moves left) = right turn
+        # Determine turn direction based on overall x-movement trend
         total_x_change = centerline_points[-1, 0] - centerline_points[0, 0]
         turn_direction = 'left_turn' if total_x_change > 0 else 'right_turn'
         
-        # Check if variance exceeds threshold
-        is_turn = curvature > curvature_threshold
+        # Adaptive threshold based on tape width variations
+        threshold = base_threshold
+        if adaptive_threshold and len(tape_widths) > 0:
+            mean_width = np.mean(tape_widths)
+            width_variation = np.std(tape_widths) / (mean_width + 1e-6)
+            # Increase threshold if tape width varies significantly
+            threshold = max(0.002, base_threshold + width_variation * 0.01)
+        
+        is_turn = curvature > threshold
         
         if not is_turn:
             return False, 'straight', curvature, centerline_points, None
@@ -169,15 +230,21 @@ def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
         hsv_full = cv.cvtColor(frame_turn, cv.COLOR_BGR2HSV)
         
         # Define HSV range for red color
-        red_lower = np.array([0, 100, 100])
+        # More permissive ranges to handle uneven lighting in turns
+        red_lower = np.array([0, 80, 80])
         red_upper = np.array([10, 255, 255])
-        red_lower_2 = np.array([160, 100, 100])
+        red_lower_2 = np.array([160, 80, 80])
         red_upper_2 = np.array([180, 255, 255])
         
         # Create masks for red ranges on cropped frame
         mask1_full = cv.inRange(hsv_full, red_lower, red_upper)
         mask2_full = cv.inRange(hsv_full, red_lower_2, red_upper_2)
         mask_full = cv.bitwise_or(mask1_full, mask2_full)
+        
+        # Apply morphological operations to fill small gaps and remove noise
+        kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
+        mask_full = cv.morphologyEx(mask_full, cv.MORPH_CLOSE, kernel)  # Fill gaps
+        mask_full = cv.morphologyEx(mask_full, cv.MORPH_OPEN, kernel)   # Remove noise
         
         # Detect edges and lines on cropped frame
         red_regions_full = cv.bitwise_and(frame_turn, frame_turn, mask=mask_full)
@@ -186,8 +253,8 @@ def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
         
         lines_full = cv.HoughLinesP(edges_full, 1, np.pi / 180, threshold=50, minLineLength=50, maxLineGap=10)
         
-        # Detect curved turn using cropped frame centerline sampling
-        is_turn, turn_type, curvature, fit_points, fit_coeffs = detect_curved_turn(frame_turn, mask_full, curvature_threshold)
+        # Detect curved turn using adaptive threshold method
+        is_turn, turn_type, curvature, fit_points, fit_coeffs = detect_curved_turn_adaptive(frame_turn, mask_full, adaptive_threshold=True, base_threshold=curvature_threshold)
         if is_turn:
             on_turn_detected(turn_type, curvature)
         
@@ -208,6 +275,11 @@ def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
         mask1 = cv.inRange(hsv, red_lower, red_upper)
         mask2 = cv.inRange(hsv, red_lower_2, red_upper_2)
         mask = cv.bitwise_or(mask1, mask2)
+        
+        # Apply morphological operations to fill gaps and improve robustness
+        kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
+        mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, kernel)  # Fill small gaps in tape
+        mask = cv.morphologyEx(mask, cv.MORPH_OPEN, kernel)   # Remove small noise
         
         # Save mask
         mask_path = os.path.join(output_dir, f"02_mask_{base_filename}.jpg")
@@ -230,40 +302,44 @@ def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
         centerline_angle = None
         centerline_distance = None
         
-        if lines is not None:
-            print(f"  Red line detected - {len(lines)} line segment(s) found")
+        # Use robust centerline sampling method (more reliable than edge detection)
+        centerline_pts = get_robust_centerline(mask, frame_cropped.shape[0], frame_cropped.shape[1], num_samples=20)
+        
+        if centerline_pts is not None and len(centerline_pts) >= 3:
+            print(f"  Red line detected - robust centerline extracted from {len(centerline_pts)} sample points")
             
-            # Find left and right edges of tape
-            left_line, right_line = find_tape_edges(lines)
+            # Fit polynomial curve through centerline points
+            poly, centerline_angle = fit_centerline_curve(centerline_pts)
             
-            if left_line is not None and right_line is not None:
-                # Draw detected edge lines in blue (offset y-coordinates to full frame)
-                for line in [left_line, right_line]:
-                    x1, y1, x2, y2 = line[0]
-                    cv.line(out, (x1, y1 + crop_top), (x2, y2 + crop_top), (255, 0, 0), 2)
+            if poly is not None and centerline_angle is not None:
+                # Draw sampled centerline points
+                for pt in centerline_pts:
+                    cv.circle(out, (int(pt[0]), int(pt[1] + crop_top)), 4, (200, 200, 0), -1)
                 
-                # Calculate centerline
-                cx1, cy1, cx2, cy2 = get_centerline_from_edges(left_line, right_line)
+                # Draw smooth curve through points
+                y_vals = np.linspace(centerline_pts[0, 1], centerline_pts[-1, 1], 50)
+                x_vals = poly(y_vals)
+                curve_points = np.array([[int(x), int(y + crop_top)] for x, y in zip(x_vals, y_vals)])
+                cv.polylines(out, [curve_points], False, (0, 255, 0), 3)
                 
-                # Draw centerline in green on full frame (offset y-coordinates)
-                cv.line(out, (cx1, cy1 + crop_top), (cx2, cy2 + crop_top), (0, 255, 0), 3)
-                
-                # Calculate angle of centerline
-                centerline_angle = calculate_line_angle(cx1, cy1, cx2, cy2)
+                # Calculate endpoints for compatibility
+                cx1, cy1 = int(centerline_pts[0, 0]), int(centerline_pts[0, 1])
+                cx2, cy2 = int(centerline_pts[-1, 0]), int(centerline_pts[-1, 1])
                 
                 # Calculate horizontal distance from image center to centerline
                 img_height, img_width = frame_cropped.shape[:2]
                 center_x = img_width / 2
                 center_y = img_height / 2
                 
-                centerline_distance = get_horizontal_distance(center_x, center_y, cx1, cy1, cx2, cy2)
+                # Use polynomial for distance calculation
+                centerline_x_at_center = int(poly(center_y))
+                centerline_distance = centerline_x_at_center - center_x
                 
                 # Draw a circle at image center in the cropped region (offset to full frame)
                 cv.circle(out, (int(center_x), int(center_y + crop_top)), 5, (0, 0, 255), -1)
                 
                 # Draw a line from image center perpendicular to the centerline (offset to full frame)
-                centerline_x_at_center = get_x_on_line(center_y, cx1, cy1, cx2, cy2)
-                cv.line(out, (int(center_x), int(center_y + crop_top)), (int(centerline_x_at_center), int(center_y + crop_top)), (255, 255, 0), 2)
+                cv.line(out, (int(center_x), int(center_y + crop_top)), (centerline_x_at_center, int(center_y + crop_top)), (255, 255, 0), 2)
                 
                 # Add text on full frame with padding from edge
                 distance_text = f"H-Dist: {centerline_distance:.2f}px"
@@ -282,17 +358,13 @@ def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
                 if is_turn:
                     print(f"  🔄 Curved turn detected: {turn_type} (curvature: {curvature:.6f})")
             else:
-                print(f"  Could not identify tape edges")
-                # Draw all detected lines for debugging (offset y-coordinates to full frame)
-                for line in lines:
-                    x1, y1, x2, y2 = line[0]
-                    cv.line(out, (x1, y1 + crop_top), (x2, y2 + crop_top), (0, 255, 0), 2)
+                print(f"  Centerline extracted but fitting failed")
         else:
-            print(f"  No red line detected")
+            print(f"  No red line detected - insufficient centerline data")
         
-        # ===== VISUALIZE CURVE FITTING FOR DEBUGGING =====
+        # ===== VISUALIZE TURN DETECTION FOR DEBUGGING =====
         if fit_points is not None:
-            # Draw the centerline points sampled from the tape
+            # Draw the centerline points sampled from the tape (top 2/3 of frame, no offset needed)
             for pt in fit_points:
                 cv.circle(out, (int(pt[0]), int(pt[1])), 4, (200, 200, 0), -1)  # Cyan points
             
@@ -302,7 +374,7 @@ def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
                 pt2 = (int(fit_points[i + 1, 0]), int(fit_points[i + 1, 1]))
                 cv.line(out, pt1, pt2, (255, 0, 255), 2)  # Magenta line
             
-            # Add curvature value to image (now variance of x-changes)
+            # Add curvature value to image
             cv.putText(out, f"Curvature (variance): {curvature:.4f} (threshold: {curvature_threshold})", 
                        (10, 135), cv.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 0), 2)
         
