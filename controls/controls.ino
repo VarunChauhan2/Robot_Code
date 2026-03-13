@@ -193,10 +193,10 @@ void moveMotors(int left, int right) {
   }
 
   // 2. Now apply the scaled (and ratio-preserved) speeds
-  digitalWrite(ain1, LOW); digitalWrite(ain2, HIGH);
+  digitalWrite(ain1, HIGH); digitalWrite(ain2, LOW);
   analogWrite(pwma, constrain(right, 0, 255));
   
-  digitalWrite(bin1, LOW); digitalWrite(bin2, HIGH);
+  digitalWrite(bin1, HIGH); digitalWrite(bin2, LOW);
   analogWrite(pwmb, constrain(left, 0, 255));
 }
 

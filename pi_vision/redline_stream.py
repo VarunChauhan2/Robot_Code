@@ -457,5 +457,5 @@ if __name__ == "__main__":
     # curvature_threshold: Lower for more sensitive turn detection, higher for less sensitive
     # Default is 0.003 (lower = more sensitive to curves)
     
-    run_stream(camera_index=0, curvature_threshold=0.003)
+    run_stream(camera_index=0, curvature_threshold=100)
 
