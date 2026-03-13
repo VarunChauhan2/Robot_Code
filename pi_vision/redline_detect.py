@@ -57,6 +57,35 @@ def get_robust_centerline(mask, frame_height, frame_width, num_samples=20):
     
     return np.array(centerline_points, dtype=np.float32) if centerline_points else None
 
+def filter_mask_by_size(mask, min_area=200, max_area=None):
+    """
+    Filter mask to remove small noise regions and keep only significant areas.
+    Keeps only contours with area >= min_area.
+    
+    Args:
+        mask: Binary mask to filter
+        min_area: Minimum contour area to keep (removes small noise)
+        max_area: Maximum contour area to keep (optional, removes very large regions)
+    
+    Returns:
+        filtered_mask: Binary mask with only kept contours
+    """
+    filtered_mask = np.zeros_like(mask)
+    
+    try:
+        contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        
+        for contour in contours:
+            area = cv.contourArea(contour)
+            if area >= min_area:
+                if max_area is None or area <= max_area:
+                    cv.drawContours(filtered_mask, [contour], 0, 255, -1)
+    except Exception as e:
+        print(f"  Error filtering mask by size: {e}")
+        return mask  # Return original if filtering fails
+    
+    return filtered_mask
+
 def fit_centerline_curve(centerline_points):
     """
     Fit a polynomial curve through centerline points.
@@ -230,10 +259,10 @@ def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
         hsv_full = cv.cvtColor(frame_turn, cv.COLOR_BGR2HSV)
         
         # Define HSV range for red color
-        # More permissive ranges to handle uneven lighting in turns
-        red_lower = np.array([0, 80, 80])
+        # Stricter ranges to avoid false positives on edges
+        red_lower = np.array([0, 100, 100])
         red_upper = np.array([10, 255, 255])
-        red_lower_2 = np.array([160, 80, 80])
+        red_lower_2 = np.array([160, 100, 100])
         red_upper_2 = np.array([180, 255, 255])
         
         # Create masks for red ranges on cropped frame
@@ -246,15 +275,58 @@ def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
         mask_full = cv.morphologyEx(mask_full, cv.MORPH_CLOSE, kernel)  # Fill gaps
         mask_full = cv.morphologyEx(mask_full, cv.MORPH_OPEN, kernel)   # Remove noise
         
+        # Filter out small noise regions, keep only significant contours
+        mask_full = filter_mask_by_size(mask_full, min_area=200)
+        
+        # Save turn detection intermediate photos
+        turn_cropped_path = os.path.join(output_dir, f"00_turn_cropped_{base_filename}.jpg")
+        cv.imwrite(turn_cropped_path, frame_turn)
+        print(f"  Saved turn cropped: {turn_cropped_path}")
+        
+        turn_mask_path = os.path.join(output_dir, f"00_turn_mask_{base_filename}.jpg")
+        cv.imwrite(turn_mask_path, mask_full)
+        print(f"  Saved turn mask: {turn_mask_path}")
+        
         # Detect edges and lines on cropped frame
         red_regions_full = cv.bitwise_and(frame_turn, frame_turn, mask=mask_full)
         gray_full = cv.cvtColor(red_regions_full, cv.COLOR_BGR2GRAY)
         edges_full = cv.Canny(gray_full, 50, 150)
         
+        turn_edges_path = os.path.join(output_dir, f"00_turn_edges_{base_filename}.jpg")
+        cv.imwrite(turn_edges_path, edges_full)
+        print(f"  Saved turn edges: {turn_edges_path}")
+        
         lines_full = cv.HoughLinesP(edges_full, 1, np.pi / 180, threshold=50, minLineLength=50, maxLineGap=10)
         
         # Detect curved turn using adaptive threshold method
         is_turn, turn_type, curvature, fit_points, fit_coeffs = detect_curved_turn_adaptive(frame_turn, mask_full, adaptive_threshold=True, base_threshold=curvature_threshold)
+        
+        # Save turn detection visualization
+        turn_viz = frame_turn.copy()
+        if fit_points is not None and len(fit_points) > 0:
+            # Draw the centerline points sampled from the tape
+            for pt in fit_points:
+                cv.circle(turn_viz, (int(pt[0]), int(pt[1])), 4, (200, 200, 0), -1)  # Cyan points
+            
+            # Draw lines connecting the sampled centerline points
+            for j in range(len(fit_points) - 1):
+                pt1 = (int(fit_points[j, 0]), int(fit_points[j, 1]))
+                pt2 = (int(fit_points[j + 1, 0]), int(fit_points[j + 1, 1]))
+                cv.line(turn_viz, pt1, pt2, (255, 0, 255), 2)  # Magenta line
+            
+            # Add curvature value to image
+            cv.putText(turn_viz, f"Curvature: {curvature:.4f}", 
+                       (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 0), 2)
+        
+        if is_turn:
+            cv.putText(turn_viz, f"TURN: {turn_type.upper()}", (10, 60), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        else:
+            cv.putText(turn_viz, "STRAIGHT", (10, 60), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        turn_viz_path = os.path.join(output_dir, f"00_turn_detected_{base_filename}.jpg")
+        cv.imwrite(turn_viz_path, turn_viz)
+        print(f"  Saved turn detected: {turn_viz_path}")
+        
         if is_turn:
             on_turn_detected(turn_type, curvature)
         
@@ -271,7 +343,7 @@ def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
         
         hsv = cv.cvtColor(frame_cropped, cv.COLOR_BGR2HSV)
         
-        # create masks for red ranges
+        # create masks for red ranges (same stricter ranges)
         mask1 = cv.inRange(hsv, red_lower, red_upper)
         mask2 = cv.inRange(hsv, red_lower_2, red_upper_2)
         mask = cv.bitwise_or(mask1, mask2)
@@ -280,6 +352,9 @@ def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
         kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
         mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, kernel)  # Fill small gaps in tape
         mask = cv.morphologyEx(mask, cv.MORPH_OPEN, kernel)   # Remove small noise
+        
+        # Filter out small noise regions, keep only significant contours
+        mask = filter_mask_by_size(mask, min_area=200)
         
         # Save mask
         mask_path = os.path.join(output_dir, f"02_mask_{base_filename}.jpg")
@@ -363,20 +438,7 @@ def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
             print(f"  No red line detected - insufficient centerline data")
         
         # ===== VISUALIZE TURN DETECTION FOR DEBUGGING =====
-        if fit_points is not None:
-            # Draw the centerline points sampled from the tape (top 2/3 of frame, no offset needed)
-            for pt in fit_points:
-                cv.circle(out, (int(pt[0]), int(pt[1])), 4, (200, 200, 0), -1)  # Cyan points
-            
-            # Draw lines connecting the sampled centerline points to show the actual path
-            for i in range(len(fit_points) - 1):
-                pt1 = (int(fit_points[i, 0]), int(fit_points[i, 1]))
-                pt2 = (int(fit_points[i + 1, 0]), int(fit_points[i + 1, 1]))
-                cv.line(out, pt1, pt2, (255, 0, 255), 2)  # Magenta line
-            
-            # Add curvature value to image
-            cv.putText(out, f"Curvature (variance): {curvature:.4f} (threshold: {curvature_threshold})", 
-                       (10, 135), cv.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 0), 2)
+        # (Turn detection intermediate photos already saved above)
         
         # Save final result
         output_path = os.path.join(output_dir, f"04_detected_{base_filename}.jpg")
