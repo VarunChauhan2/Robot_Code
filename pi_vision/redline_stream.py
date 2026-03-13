@@ -455,7 +455,7 @@ if __name__ == "__main__":
     # You can adjust parameters:
     # camera_index: 0 for default camera, 1 if you have multiple cameras
     # curvature_threshold: Lower for more sensitive turn detection, higher for less sensitive
-    # Default is 0.003 (lower = more sensitive to curves)
+    # Default is 100 (lower = more sensitive to curves)
     
     run_stream(camera_index=0, curvature_threshold=100)
 
