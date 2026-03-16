@@ -21,6 +21,10 @@ float Kd = 0; // Derivative Control Variable
 int lastError = 0; // error tracking variable
 unsigned long lastHeartbeat = 0; // safety variable to check if instructions are being received from Pi
 
+// Consecutive turn tracking
+int consecutiveTurnCount = 0; // counter for consecutive turn commands
+int turnThreshold = 10; // wait for 10 consecutive turn instructions
+
 // Shared variables for I2C data
 volatile int currentCommand = 0; // command from Pi based on CV information (state of the system)
 volatile int i2cOffset = 0; // offset data from Pi
@@ -69,24 +73,32 @@ void loop() {
       break;
 
     case 2: // ARC LEFT (90 DEGREE)
-      executeArc(200, 0.4, true); // Outer speed 200, Ratio 0.4
-      currentCommand = 1; // Return to following
+      if (consecutiveTurnCount >= turnThreshold) {
+        executeArc(200, 0.4, true); // Outer speed 200, Ratio 0.4
+        consecutiveTurnCount = 0; // Reset after executing
+        currentCommand = 1; // Return to following
+      }
       break;
 
     case 3: // ARC RIGHT (90 DEGREE)
-      executeArc(200, 0.4, false);
-      currentCommand = 1;
+      if (consecutiveTurnCount >= turnThreshold) {
+        executeArc(200, 0.4, false);
+        consecutiveTurnCount = 0; // Reset after executing
+        currentCommand = 1;
+      }
       break;
 
     case 4: // GRAB SEQUENCE
       stopMotors();
       executeGripper(true);
+      consecutiveTurnCount = 0;
       currentCommand = 0;
       break;
 
     case 5: // DROP SEQUENCE
       stopMotors();
       executeGripper(false);
+      consecutiveTurnCount = 0;
       currentCommand = 0;
       break;
 
@@ -112,9 +124,18 @@ void receiveEvent(int howMany) {
     i2cOffset = Wire.read();
     i2cDirection = Wire.read();
   } else if (howMany == 2) {
-    // Other commands
+    // Other commands (turns, grab, drop)
     flush = Wire.read();
-    currentCommand = Wire.read();
+    int cmd = Wire.read();
+
+    // Track consecutive turn commands
+    if (cmd == 2 || cmd == 3) {
+      consecutiveTurnCount++;
+    } else {
+      consecutiveTurnCount = 0; // Reset counter for non-turn commands
+    }
+
+    currentCommand = cmd;
   }
 }
 
