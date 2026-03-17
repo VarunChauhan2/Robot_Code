@@ -49,6 +49,8 @@ int lastError = 0;
 
 int consecutiveTurnCount = 0;
 const int turnThreshold = 10;
+const int TURN_BACKUP_TIME = 1000;    // 1 second backup duration
+const int TURN_BACKUP_SPEED = 75;     // Half of baseSpeed (150)
 
 // ============================================================================
 // GRAB SEQUENCE
@@ -143,7 +145,7 @@ void loop() {
       if (consecutiveTurnCount >= turnThreshold) {
         executeArc(200, 0.4, true);
         consecutiveTurnCount = 0;
-        currentCommand = 1;
+        currentCommand = 0;  // Wait for new command
       }
       break;
 
@@ -151,7 +153,7 @@ void loop() {
       if (consecutiveTurnCount >= turnThreshold) {
         executeArc(200, 0.4, false);
         consecutiveTurnCount = 0;
-        currentCommand = 1;
+        currentCommand = 0;  // Wait for new command
       }
       break;
 
@@ -307,6 +309,7 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
 
   delay(6000);  // Camera mount settling time
 
+  // Execute 90-degree turn
   while (abs(angleZ) < 90.0) {
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
@@ -325,7 +328,15 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
     }
   }
 
+  // Stop after turn
   lastError = 0;
+  stopMotors();
+
+  // Backup straight to re-center tape in camera FOV
+  unsigned long backupStartTime = millis();
+  while (millis() - backupStartTime < TURN_BACKUP_TIME) {
+    moveMotors(-TURN_BACKUP_SPEED, -TURN_BACKUP_SPEED);
+  }
   stopMotors();
 }
 
