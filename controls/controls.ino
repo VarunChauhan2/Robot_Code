@@ -3,103 +3,164 @@
 #include <Adafruit_Sensor.h>
 #include <Servo.h>
 
+// ============================================================================
+// HARDWARE CONFIGURATION
+// ============================================================================
+
 // Motor A (Right)
-int pwma = 6; int ain2 = 7; int ain1 = 8;
+int pwma = 6;
+int ain1 = 8;
+int ain2 = 7;
+
 // Motor B (Left)
-int pwmb = 5; int bin1 = 2; int bin2 = 3;
-// Servos 
-Servo gripperServo; // Pin 10
-Servo liftServo;    // Pin 11
+int pwmb = 5;
+int bin1 = 2;
+int bin2 = 3;
+
+// Servos
+Servo gripperServo;  // Pin 10
+Servo liftServo;     // Pin 11
 
 // IMU
 Adafruit_MPU6050 mpu;
 
-const int ARDUINO_I2C_ADDR = 0x08; // Arduino I2C Address
-int baseSpeed = 150; // motor speed 
-float Kp = 0.5; // Proportional control variable
-float Kd = 0; // Derivative Control Variable
-int lastError = 0; // error tracking variable
-unsigned long lastHeartbeat = 0; // safety variable to check if instructions are being received from Pi
+// ============================================================================
+// I2C & COMMUNICATION
+// ============================================================================
 
-// Consecutive turn tracking
-int consecutiveTurnCount = 0; // counter for consecutive turn commands
-int turnThreshold = 10; // wait for 10 consecutive turn instructions
+const int ARDUINO_I2C_ADDR = 0x08;
+volatile int currentCommand = 0;
+volatile int i2cOffset = 0;
+volatile int i2cDirection = 0;
+unsigned long lastHeartbeat = 0;
 
-// Shared variables for I2C data
-volatile int currentCommand = 0; // command from Pi based on CV information (state of the system)
-volatile int i2cOffset = 0; // offset data from Pi
-volatile int i2cDirection = 0; // direction of offset; 1 = left, 0 = right
+// ============================================================================
+// LINE FOLLOWING (PD CONTROL)
+// ============================================================================
+
+int baseSpeed = 150;
+float Kp = 0.5;
+float Kd = 0;
+int lastError = 0;
+
+// ============================================================================
+// TURN TRACKING
+// ============================================================================
+
+int consecutiveTurnCount = 0;
+const int turnThreshold = 10;
+
+// ============================================================================
+// GRAB SEQUENCE
+// ============================================================================
+
+volatile int grabXOffset = 0;
+volatile int grabYOffset = 0;
+int grabPhase = 0;
+unsigned long grabPhaseTime = 0;
+float grabTurnAngle = 0;
+unsigned long grabTurnLastTime = 0;
+int grabCommandCount = 0;
+int lastGrabError = 0;
+
+const int GRAB_BASE_SPEED = 80;
+const int GRAB_FINAL_PUSH_TIME = 2000;
+const int GRAB_X_THRESHOLD = 3;
+const int grabThreshold = 5;
+float grabKp = 0.5;
+float grabKd = 0;
+
+bool grabSequenceCompleted = false;
+
+// ============================================================================
+// DROP SEQUENCE
+// ============================================================================
+
+int dropPhase = 0;
+unsigned long dropPhaseTime = 0;
+int dropCommandCount = 0;
+
+const int DROP_MOTOR_DELAY_TIME = 1000;
+const int dropThreshold = 5;
+
+bool dropSequenceCompleted = false;
+
+
+// ============================================================================
+// SETUP
+// ============================================================================
 
 void setup() {
   Serial.begin(115200);
-  
-  // Initialize Motor Pins
-  pinMode(pwma, OUTPUT); pinMode(ain1, OUTPUT); pinMode(ain2, OUTPUT);
-  pinMode(pwmb, OUTPUT); pinMode(bin1, OUTPUT); pinMode(bin2, OUTPUT);
 
-  // Initialize Servos 
+  // Initialize motor pins
+  pinMode(pwma, OUTPUT);
+  pinMode(ain1, OUTPUT);
+  pinMode(ain2, OUTPUT);
+  pinMode(pwmb, OUTPUT);
+  pinMode(bin1, OUTPUT);
+  pinMode(bin2, OUTPUT);
+
+  // Initialize servos
   gripperServo.attach(10);
-  liftServo.attach(11); 
-
+  liftServo.attach(11);
   liftServo.write(30);
   gripperServo.write(10);
 
-  // Initialize I2C from Pi
-  Wire.begin(ARDUINO_I2C_ADDR); // initialize I2C address of Arduino to be seen from Pi
-  Wire.onReceive(receiveEvent); // receive command from Pi
-  Wire.onRequest(requestEvent); // receive status request from Pi
+  // Initialize I2C communication
+  Wire.begin(ARDUINO_I2C_ADDR);
+  Wire.onReceive(receiveEvent);
+  Wire.onRequest(requestEvent);
 
-  // Initialize MPU6050 
+  // Initialize IMU
   if (!mpu.begin()) {
-    Serial.println("Failed to find MPU6050 chip"); 
-    while (1) delay(10); 
+    Serial.println("Failed to find MPU6050 chip");
+    while (1) delay(10);
   }
   mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-  
+
   lastHeartbeat = millis();
   Serial.println("System Ready.");
 }
 
+// ============================================================================
+// MAIN LOOP
+// ============================================================================
+
 void loop() {
-  // Stop motors if Pi hasn't sent data in 1 second
+  // Heartbeat safety: stop motors if Pi communication lost
   if (millis() - lastHeartbeat > 1000) {
     stopMotors();
     return;
   }
 
   switch (currentCommand) {
-    case 1: // FOLLOW LINE (PD CONTROL)
+    case 1: // FOLLOW LINE
       runPDLogic(i2cOffset, i2cDirection);
       break;
 
-    case 2: // ARC LEFT (90 DEGREE)
+    case 2: // TURN LEFT
       if (consecutiveTurnCount >= turnThreshold) {
-        executeArc(200, 0.4, true); // Outer speed 200, Ratio 0.4
-        consecutiveTurnCount = 0; // Reset after executing
-        currentCommand = 1; // Return to following
+        executeArc(200, 0.4, true);
+        consecutiveTurnCount = 0;
+        currentCommand = 1;
       }
       break;
 
-    case 3: // ARC RIGHT (90 DEGREE)
+    case 3: // TURN RIGHT
       if (consecutiveTurnCount >= turnThreshold) {
         executeArc(200, 0.4, false);
-        consecutiveTurnCount = 0; // Reset after executing
+        consecutiveTurnCount = 0;
         currentCommand = 1;
       }
       break;
 
     case 4: // GRAB SEQUENCE
-      stopMotors();
-      executeGripper(true);
-      consecutiveTurnCount = 0;
-      currentCommand = 0;
+      executeGrabSequence(grabXOffset, grabYOffset);
       break;
 
     case 5: // DROP SEQUENCE
-      stopMotors();
-      executeGripper(false);
-      consecutiveTurnCount = 0;
-      currentCommand = 0;
+      executeDropSequence();
       break;
 
     default:
@@ -108,68 +169,148 @@ void loop() {
   }
 }
 
-// I2C Communication Handler
+
+// ============================================================================
+// I2C COMMUNICATION
+// ============================================================================
+
 void receiveEvent(int howMany) {
   lastHeartbeat = millis();
   int flush;
 
-  // Follow command case
+  // ---- 4-byte commands: Follow or Grab ----
   if (howMany == 4) {
     flush = Wire.read();
     int cmd = Wire.read();
-    // Reset error if switching into Follow Mode
-    if (cmd == 1 && currentCommand != 1) lastError = 0;
 
-    currentCommand = cmd;
-    i2cOffset = Wire.read();
-    i2cDirection = Wire.read();
-  } else if (howMany == 2) {
-    // Other commands (turns, grab, drop)
+    // If currently in grab sequence, only accept grab updates
+    if (currentCommand == 4) {
+      if (cmd == 4) {
+        grabXOffset = (signed char)Wire.read();
+        grabYOffset = (signed char)Wire.read();
+      } else {
+        Wire.read();
+        Wire.read();
+      }
+      return;
+    }
+
+    // Handle follow command
+    if (cmd == 1) {
+      if (currentCommand != 1) lastError = 0;
+      currentCommand = cmd;
+      i2cOffset = Wire.read();
+      i2cDirection = Wire.read();
+      grabCommandCount = 0;
+    }
+    // Handle grab command
+    else if (cmd == 4) {
+      if (grabSequenceCompleted) {
+        Wire.read();
+        Wire.read();
+        return;
+      }
+
+      if (currentCommand != 4) {
+        grabCommandCount = 1;
+      } else {
+        grabCommandCount++;
+      }
+
+      grabXOffset = (signed char)Wire.read();
+      grabYOffset = (signed char)Wire.read();
+
+      if (grabCommandCount >= grabThreshold) {
+        currentCommand = cmd;
+      }
+    }
+    // Unknown 4-byte command
+    else {
+      Wire.read();
+      Wire.read();
+      grabCommandCount = 0;
+    }
+  }
+  // ---- 2-byte commands: Turns, Drop ----
+  else if (howMany == 2) {
     flush = Wire.read();
     int cmd = Wire.read();
 
-    // Track consecutive turn commands
-    if (cmd == 2 || cmd == 3) {
-      consecutiveTurnCount++;
-    } else {
-      consecutiveTurnCount = 0; // Reset counter for non-turn commands
+    // Ignore all non-grab commands during grab sequence
+    if (currentCommand == 4) {
+      return;
     }
 
-    currentCommand = cmd;
+    // Handle drop command
+    if (cmd == 5) {
+      if (!grabSequenceCompleted) {
+        return;
+      }
+
+      if (dropSequenceCompleted) {
+        return;
+      }
+
+      if (currentCommand != 5) {
+        dropCommandCount = 1;
+      } else {
+        dropCommandCount++;
+      }
+
+      if (dropCommandCount >= dropThreshold) {
+        currentCommand = cmd;
+      }
+    }
+    // Handle other commands (turns)
+    else {
+      if (cmd == 2 || cmd == 3) {
+        consecutiveTurnCount++;
+      } else {
+        consecutiveTurnCount = 0;
+      }
+
+      grabCommandCount = 0;
+      dropCommandCount = 0;
+      currentCommand = cmd;
+    }
   }
 }
 
-// Busy Flag for GRAB/ARC/DROP
 void requestEvent() {
-  // 0 = Ready for next task, 1 = Busy executing Grab/Arc
+  // Return status: 0 = ready, 1 = busy
   byte status = (currentCommand == 0 || currentCommand == 1) ? 0 : 1;
-  Wire.write(status); 
+  Wire.write(status);
 }
 
-// Control & Movement Functions
+
+// ============================================================================
+// LINE FOLLOWING
+// ============================================================================
+
 void runPDLogic(int offset, int dir) {
-  float currentError = (dir == 1) ? offset : -offset; // error value
-  
-  float derivative = currentError - lastError; // Derivative control value
-  int adjustment = (currentError * Kp) + (derivative * Kd); // PD adjustment
-  
+  float currentError = (dir == 1) ? offset : -offset;
+  float derivative = currentError - lastError;
+  int adjustment = (currentError * Kp) + (derivative * Kd);
+
   moveMotors(baseSpeed + adjustment, baseSpeed - adjustment);
   lastError = currentError;
 }
 
-// Turn Function
+// ============================================================================
+// TURN EXECUTION
+// ============================================================================
+
 void executeArc(int outerSpeed, float ratio, bool isLeft) {
   int innerSpeed = outerSpeed * ratio;
   float angleZ = 0;
   unsigned long lastTime = millis();
-  bool lineFound = false; // checker for turn optimization
 
-  delay(6000); // temp delay before new mount
+  delay(6000);  // Camera mount settling time
 
   while (abs(angleZ) < 90.0) {
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
-    
+
     unsigned long now = millis();
     float dt = (now - lastTime) / 1000.0;
     lastTime = now;
@@ -177,51 +318,167 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
 
     Serial.println(angleZ);
 
-    if (isLeft) moveMotors(innerSpeed, outerSpeed);
-    else moveMotors(outerSpeed, innerSpeed);
-
-    /*
-    // Early exit if CV finds the next line after 65 degrees
-    if (abs(angleZ) > 65.0 && Wire.available()) {
-      if (Wire.peek() == 1) lineFound = true;
+    if (isLeft) {
+      moveMotors(innerSpeed, outerSpeed);
+    } else {
+      moveMotors(outerSpeed, innerSpeed);
     }
-    */
   }
+
   lastError = 0;
   stopMotors();
 }
 
+
+// ============================================================================
+// GRAB SEQUENCE STATE MACHINE
+// ============================================================================
+
+void executeGrabSequence(int xOffset, int yOffset) {
+  // Phase 0: Lateral centering + forward movement
+  if (grabPhase == 0) {
+    float currentError = xOffset;
+    float derivative = currentError - lastGrabError;
+    int xAdjustment = (currentError * grabKp) + (derivative * grabKd);
+    lastGrabError = currentError;
+
+    int leftMotor = GRAB_BASE_SPEED + xAdjustment;
+    int rightMotor = GRAB_BASE_SPEED - xAdjustment;
+
+    moveMotors(leftMotor, rightMotor);
+
+    if (abs(yOffset) <= 2) {
+      grabPhase = 1;
+      grabPhaseTime = millis();
+    }
+  }
+  // Phase 1: Final push (2 seconds straight)
+  else if (grabPhase == 1) {
+    moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);
+
+    if (millis() - grabPhaseTime >= GRAB_FINAL_PUSH_TIME) {
+      grabPhase = 2;
+      stopMotors();
+    }
+  }
+  // Phase 2: Execute gripper
+  else if (grabPhase == 2) {
+    executeGripper(true);
+    grabPhase = 3;
+    grabTurnAngle = 0;
+    grabTurnLastTime = millis();
+  }
+  // Phase 3: 180-degree spin turn
+  else if (grabPhase == 3) {
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
+
+    unsigned long now = millis();
+    float dt = (now - grabTurnLastTime) / 1000.0;
+    grabTurnLastTime = now;
+    grabTurnAngle += (g.gyro.z * 57.2958) * dt;
+
+    moveMotors(100, -100);  // Spin left
+
+    if (abs(grabTurnAngle) >= 180.0) {
+      stopMotors();
+      currentCommand = 0;
+      grabSequenceCompleted = true;
+    }
+  }
+}
+
+
+// ============================================================================
+// DROP SEQUENCE STATE MACHINE
+// ============================================================================
+
+void executeDropSequence() {
+  // Phase 0: Initialize motor delay
+  if (dropPhase == 0) {
+    moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);
+    dropPhaseTime = millis();
+    dropPhase = 1;
+  }
+  // Phase 1: Wait for motor delay to complete
+  else if (dropPhase == 1) {
+    if (millis() - dropPhaseTime >= DROP_MOTOR_DELAY_TIME) {
+      stopMotors();
+      dropPhase = 2;
+    } else {
+      moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);
+    }
+  }
+  // Phase 2: Execute gripper drop
+  else if (dropPhase == 2) {
+    executeGripper(false);
+    currentCommand = 0;
+    dropSequenceCompleted = true;
+  }
+}
+
+
+// ============================================================================
+// GRIPPER CONTROL
+// ============================================================================
+
 void executeGripper(bool grab) {
   if (grab) {
-    liftServo.write(180); delay(1000); 
-    gripperServo.write(90); delay(1000);
-    liftServo.write(90); 
+    liftServo.write(180);
+    delay(1000);
+    gripperServo.write(90);
+    delay(1000);
+    liftServo.write(90);
   } else {
-    liftServo.write(180); delay(1000);
-    gripperServo.write(0); delay(1000);
+    liftServo.write(180);
+    delay(1000);
+    gripperServo.write(0);
+    delay(1000);
     liftServo.write(90);
   }
 }
 
+// ============================================================================
+// MOTOR CONTROL
+// ============================================================================
+
 void moveMotors(int left, int right) {
-  // Find if either motor exceeds 255
-  int maxVal = max(abs(left), abs(right));
-  
+  // Set left motor direction (positive = forward, negative = reverse)
+  if (left >= 0) {
+    digitalWrite(bin1, HIGH);
+    digitalWrite(bin2, LOW);
+  } else {
+    digitalWrite(bin1, LOW);
+    digitalWrite(bin2, HIGH);
+  }
+  int leftSpeed = abs(left);
+
+  // Set right motor direction (positive = forward, negative = reverse)
+  if (right >= 0) {
+    digitalWrite(ain1, HIGH);
+    digitalWrite(ain2, LOW);
+  } else {
+    digitalWrite(ain1, LOW);
+    digitalWrite(ain2, HIGH);
+  }
+  int rightSpeed = abs(right);
+
+  // Scale if either motor exceeds PWM max
+  int maxVal = max(leftSpeed, rightSpeed);
   if (maxVal > 255) {
     float scale = 255.0 / maxVal;
-    left *= scale;
-    right *= scale;
+    leftSpeed *= scale;
+    rightSpeed *= scale;
   }
 
-  // 2. Now apply the scaled (and ratio-preserved) speeds
-  digitalWrite(ain1, HIGH); digitalWrite(ain2, LOW);
-  analogWrite(pwma, constrain(right, 0, 255));
-  
-  digitalWrite(bin1, HIGH); digitalWrite(bin2, LOW);
-  analogWrite(pwmb, constrain(left, 0, 255));
+  // Apply scaled speeds
+  analogWrite(pwma, constrain(rightSpeed, 0, 255));
+  analogWrite(pwmb, constrain(leftSpeed, 0, 255));
 }
 
 void stopMotors() {
-  digitalWrite(ain1, HIGH); digitalWrite(ain2, HIGH);
-  digitalWrite(bin1, HIGH); digitalWrite(bin2, HIGH);
+  digitalWrite(ain1, HIGH);
+  digitalWrite(ain2, HIGH);
+  digitalWrite(bin1, HIGH);
+  digitalWrite(bin2, HIGH);
 }
