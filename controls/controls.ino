@@ -54,8 +54,8 @@ int consecutiveTurnCount = 0;
 const int turnThreshold = 10;
 const int TURN_BACKUP_TIME = 7000;    // 7 second backup duration 
 const int TURN_BACKUP_SPEED = 100;    // Backup speed
-const int TURN_SETTLE_FROM_FOLLOW = 5750;  // 5.75s settling after line-follow
-const int TURN_SETTLE_FROM_BACKUP = 500;   // 0.5s settling after backup
+const int TURN_SETTLE_FROM_FOLLOW = 6750;  // 6.75s settling after line-follow
+const int TURN_SETTLE_FROM_BACKUP = 1000;   // 0.5s settling after backup
 const int FOLLOW_IGNORE_TIME = TURN_SETTLE_FROM_BACKUP;  // Ignore follow commands during backup settling (prevent errant corrections)
 // ============================================================================
 // GRAB SEQUENCE
@@ -178,7 +178,7 @@ void loop() {
     case 2: // TURN LEFT
       if (consecutiveTurnCount >= turnThreshold) {
         Serial.println(F("CMD: TURN LEFT"));
-        executeArc(200, 0.35, true);
+        executeArc(200, -0.1, true);
         consecutiveTurnCount = 0;
         currentCommand = 0;
       } else {
@@ -192,7 +192,7 @@ void loop() {
     case 3: // TURN RIGHT
       if (consecutiveTurnCount >= turnThreshold) {
         Serial.println(F("CMD: TURN RIGHT"));
-        executeArc(200, 0.35, false);
+        executeArc(200, -0.1, false);
         consecutiveTurnCount = 0;
         currentCommand = 0;
       } else {
