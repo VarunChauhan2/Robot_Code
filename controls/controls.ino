@@ -347,6 +347,11 @@ void receiveEvent(int howMany) {
         consecutiveTurnCount++;
         Serial.print(F("TURN CMD: ")); 
         Serial.println(cmd == 2 ? F("LEFT") : F("RIGHT"));
+        
+        // Capture previous command when transitioning to a new turn command
+        if (currentCommand != cmd) {
+          previousCommand = currentCommand;
+        }
       } else {
         Serial.print(F("Unknown 2-byte cmd: "));
         Serial.println(cmd);
@@ -359,11 +364,6 @@ void receiveEvent(int howMany) {
 
       grabCommandCount = 0;
       dropCommandCount = 0;
-      
-      // Only capture previousCommand when actually changing to a different command
-      if (currentCommand != cmd) {
-        previousCommand = currentCommand;
-      }
       currentCommand = cmd;
     }
   }
