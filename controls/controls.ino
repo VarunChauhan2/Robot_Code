@@ -32,9 +32,11 @@ Adafruit_LIS3MDL lis3mdl;
 
 const int ARDUINO_I2C_ADDR = 0x08;
 volatile int currentCommand = 0;
+int previousCommand = 0;  // Track command before transition
 volatile int i2cOffset = 0;
 volatile int i2cDirection = 0;
 unsigned long lastHeartbeat = 0;
+unsigned long lastTurnBackupTime = 0;  // Track when turn+backup completes
 
 // ============================================================================
 // LINE FOLLOWING (PD CONTROL)
@@ -51,9 +53,11 @@ int lastError = 0;
 
 int consecutiveTurnCount = 0;
 const int turnThreshold = 10;
-const int TURN_BACKUP_TIME = 9000;    // 10 second backup duration
-const int TURN_BACKUP_SPEED = 100;     // Half of baseSpeed (150)
-
+const int TURN_BACKUP_TIME = 7000;    // 7 second backup duration 
+const int TURN_BACKUP_SPEED = 100;    // Backup speed
+const int TURN_SETTLE_FROM_FOLLOW = 5750;  // 5.75s settling after line-follow
+const int TURN_SETTLE_FROM_BACKUP = 500;   // 0.5s settling after backup
+const int FOLLOW_IGNORE_TIME = TURN_SETTLE_FROM_BACKUP;  // Ignore follow commands during backup settling (prevent errant corrections)
 // ============================================================================
 // GRAB SEQUENCE
 // ============================================================================
@@ -175,7 +179,8 @@ void loop() {
     case 2: // TURN LEFT
       if (consecutiveTurnCount >= turnThreshold) {
         Serial.println(F("CMD: TURN LEFT"));
-        executeArc(200, 0.4, true);
+        executeArc(200, 0.4, true, previousCommand);
+        previousCommand = currentCommand;
         consecutiveTurnCount = 0;
         currentCommand = 0;
       } else {
@@ -189,7 +194,8 @@ void loop() {
     case 3: // TURN RIGHT
       if (consecutiveTurnCount >= turnThreshold) {
         Serial.println(F("CMD: TURN RIGHT"));
-        executeArc(200, 0.4, false);
+        executeArc(200, 0.4, false, previousCommand);
+        previousCommand = currentCommand;
         consecutiveTurnCount = 0;
         currentCommand = 0;
       } else {
@@ -249,6 +255,14 @@ void receiveEvent(int howMany) {
 
     // Handle follow command
     if (cmd == 1) {
+      // Ignore follow commands during backup/camera re-acquisition period
+      if (lastTurnBackupTime > 0 && (millis() - lastTurnBackupTime) < FOLLOW_IGNORE_TIME) {
+        Serial.println(F("FOLLOW cmd ignored (backup settling period)"));
+        Wire.read();
+        Wire.read();
+        return;
+      }
+      
       if (currentCommand != 1) {
         Serial.println(F("CMD: FOLLOW LINE"));
         lastError = 0;
@@ -378,12 +392,23 @@ void runPDLogic(int offset, int dir) {
 // TURN EXECUTION
 // ============================================================================
 
-void executeArc(int outerSpeed, float ratio, bool isLeft) {
+void executeArc(int outerSpeed, float ratio, bool isLeft, int prevCommand) {
   // Clear any leftover grab/drop state before turn
   grabPhase = 0;
   dropPhase = 0;
   grabSequenceCompleted = false;
   dropSequenceCompleted = false;
+  
+  // Determine settling time based on previous command
+  // From line-follow: need full settling time (camera blinded by turn)
+  // From backup/idle: minimal settling (already repositioned)
+  int settleTime = (prevCommand == 1) ? TURN_SETTLE_FROM_FOLLOW : TURN_SETTLE_FROM_BACKUP;
+  
+  if (prevCommand == 1) {
+    Serial.println(F("SETTLE: 5.75s (from line-follow)"));
+  } else {
+    Serial.println(F("SETTLE: 0.5s (from backup)"));
+  }
   
   int innerSpeed = outerSpeed * ratio;
   float target_rotation = 90.0;  // Always rotate 90 degrees, measured relative to turn start
@@ -393,8 +418,9 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
   Serial.print(F("TURN START: "));
   Serial.println(isLeft ? "LEFT" : "RIGHT");
   
+  // Settling phase: move forward straight (duration depends on previous command)
   unsigned long settleStartTime = millis();
-  while (millis() - settleStartTime < 5750) {
+  while (millis() - settleStartTime < settleTime) {
     sensors_event_t accel, gyro, mag, temp;
     lsm6ds.getEvent(&accel, &gyro, &temp);
     
@@ -460,7 +486,7 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
   delay(500);  // Brief settle time after turn
 
   // Backup straight to re-center tape in camera FOV
-  Serial.println(F("BACKUP: Starting 10-second backup..."));
+  Serial.println(F("BACKUP: Starting 5-second backup..."));
   unsigned long backupStartTime = millis();
   while (millis() - backupStartTime < TURN_BACKUP_TIME) {
     sensors_event_t accel, gyro, mag, temp;
@@ -479,6 +505,9 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
   }
   stopMotors();
   Serial.println(F("BACKUP: Complete"));
+  
+  // Record backup completion time to ignore follow commands during camera re-acquisition
+  lastTurnBackupTime = millis();
   
   // Reset state after turn and backup complete
   grabPhase = 0;
