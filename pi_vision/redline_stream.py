@@ -297,8 +297,13 @@ def send_i2c_data(centerline_distance, is_turn=False, turn_type='straight'):
             # Offset is absolute value of distance, clamped to byte range (0-255)
             offset = int(np.clip(abs(centerline_distance), 0, 255))
         
-        # Send 3 bytes directly: (mode, offset, direction)
-        data = [mode, offset, direction]
+        if turn_type == 'left_turn':
+            data = [mode]
+        elif turn_type == 'right_turn':
+            data = [mode]
+        else:  # straight
+            data = [mode, offset, direction]
+
         bus.write_i2c_block_data(I2C_ADDR, 0, data)
     except Exception as e:
         print(f"  I2C transmission error: {e}")
