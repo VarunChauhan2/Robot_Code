@@ -424,7 +424,7 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
     lsm6ds.getEvent(&accel, &gyro, &temp);
     
     // Move forward straight
-    moveMotors(150, 150);
+    moveMotorsStraight(150, false);
   }
   stopMotors();
 
@@ -492,7 +492,7 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
     lsm6ds.getEvent(&accel, &gyro, &temp);
     getFusedHeading(gyro.gyro.z);  // Keep fused heading updated during backup
     
-    moveMotors(-TURN_BACKUP_SPEED, -TURN_BACKUP_SPEED);
+    moveMotorsStraight(-TURN_BACKUP_SPEED, true);
     
     // Debug: print backup progress every 2 seconds
     unsigned long elapsedBackup = millis() - backupStartTime;
@@ -761,4 +761,21 @@ float getHeadingChange(float target_angle) {
   if (diff < -180) diff += 360;
   
   return diff;
+}
+
+void moveMotorsStraight(int speed, bool backward) {
+  // Move with gyro-guided correction to keep perfectly straight
+  // If robot is rotating, compensate with motor speed adjustment
+  
+  sensors_event_t gyro;
+  lsm6ds.getEvent(&accel, &gyro, &temp);
+  
+  // If rotating (gyro_z != 0), apply small correction
+  float correctionFactor = 1.0 + (gyro.gyro.z * 0.005);  // Scale gyro reading
+  
+  int leftSpeed = speed * correctionFactor;
+  int rightSpeed = speed / correctionFactor;
+  
+  moveMotors(backward ? -leftSpeed : leftSpeed, 
+             backward ? -rightSpeed : rightSpeed);
 }
