@@ -32,7 +32,6 @@ Adafruit_LIS3MDL lis3mdl;
 
 const int ARDUINO_I2C_ADDR = 0x08;
 volatile int currentCommand = 0;
-int previousCommand = 0;  // Track command before transition
 volatile int i2cOffset = 0;
 volatile int i2cDirection = 0;
 unsigned long lastHeartbeat = 0;
@@ -179,7 +178,7 @@ void loop() {
     case 2: // TURN LEFT
       if (consecutiveTurnCount >= turnThreshold) {
         Serial.println(F("CMD: TURN LEFT"));
-        executeArc(200, 0.4, true, previousCommand);
+        executeArc(200, 0.35, true);
         consecutiveTurnCount = 0;
         currentCommand = 0;
       } else {
@@ -193,7 +192,7 @@ void loop() {
     case 3: // TURN RIGHT
       if (consecutiveTurnCount >= turnThreshold) {
         Serial.println(F("CMD: TURN RIGHT"));
-        executeArc(200, 0.4, false, previousCommand);
+        executeArc(200, 0.35, false);
         consecutiveTurnCount = 0;
         currentCommand = 0;
       } else {
@@ -263,7 +262,6 @@ void receiveEvent(int howMany) {
       
       if (currentCommand != 1) {
         Serial.println(F("CMD: FOLLOW LINE"));
-        previousCommand = currentCommand;  // Capture previous state
         lastError = 0;
       }
       if (consecutiveTurnCount > 0) {
@@ -287,7 +285,6 @@ void receiveEvent(int howMany) {
 
       if (currentCommand != 4) {
         grabCommandCount = 1;
-        previousCommand = currentCommand;  // Capture previous state
       } else {
         grabCommandCount++;
       }
@@ -347,11 +344,6 @@ void receiveEvent(int howMany) {
         consecutiveTurnCount++;
         Serial.print(F("TURN CMD: ")); 
         Serial.println(cmd == 2 ? F("LEFT") : F("RIGHT"));
-        
-        // Capture previous command when transitioning to a new turn command
-        if (currentCommand != cmd) {
-          previousCommand = currentCommand;
-        }
       } else {
         Serial.print(F("Unknown 2-byte cmd: "));
         Serial.println(cmd);
@@ -397,22 +389,24 @@ void runPDLogic(int offset, int dir) {
 // TURN EXECUTION
 // ============================================================================
 
-void executeArc(int outerSpeed, float ratio, bool isLeft, int prevCommand) {
+void executeArc(int outerSpeed, float ratio, bool isLeft) {
   // Clear any leftover grab/drop state before turn
   grabPhase = 0;
   dropPhase = 0;
   grabSequenceCompleted = false;
   dropSequenceCompleted = false;
   
-  // Determine settling time based on previous command
-  // From line-follow: need full settling time (camera blinded by turn)
-  // From backup/idle: minimal settling (already repositioned)
-  int settleTime = (prevCommand == 1) ? TURN_SETTLE_FROM_FOLLOW : TURN_SETTLE_FROM_BACKUP;
+  // Determine settling time based on whether robot recently backed up
+  // Within 1 second of backup completion: minimal settling (camera already re-acquired)
+  // Otherwise: full settling time (camera needs repositioning after turn)
+  const unsigned long BACKUP_WINDOW = 1000;  // 1 second window after backup
+  bool recentBackup = (lastTurnBackupTime > 0 && (millis() - lastTurnBackupTime) < BACKUP_WINDOW);
+  int settleTime = recentBackup ? TURN_SETTLE_FROM_BACKUP : TURN_SETTLE_FROM_FOLLOW;
   
-  if (prevCommand == 1) {
-    Serial.println(F("SETTLE: 5.75s (from line-follow)"));
+  if (recentBackup) {
+    Serial.println(F("SETTLE: 0.5s (recent backup, camera re-acquired)"));
   } else {
-    Serial.println(F("SETTLE: 0.5s (from backup)"));
+    Serial.println(F("SETTLE: 5.75s (camera needs repositioning)"));
   }
   
   int innerSpeed = outerSpeed * ratio;
