@@ -180,7 +180,6 @@ void loop() {
       if (consecutiveTurnCount >= turnThreshold) {
         Serial.println(F("CMD: TURN LEFT"));
         executeArc(200, 0.4, true, previousCommand);
-        previousCommand = currentCommand;
         consecutiveTurnCount = 0;
         currentCommand = 0;
       } else {
@@ -195,7 +194,6 @@ void loop() {
       if (consecutiveTurnCount >= turnThreshold) {
         Serial.println(F("CMD: TURN RIGHT"));
         executeArc(200, 0.4, false, previousCommand);
-        previousCommand = currentCommand;
         consecutiveTurnCount = 0;
         currentCommand = 0;
       } else {
@@ -265,6 +263,7 @@ void receiveEvent(int howMany) {
       
       if (currentCommand != 1) {
         Serial.println(F("CMD: FOLLOW LINE"));
+        previousCommand = currentCommand;  // Capture previous state
         lastError = 0;
       }
       if (consecutiveTurnCount > 0) {
@@ -288,6 +287,7 @@ void receiveEvent(int howMany) {
 
       if (currentCommand != 4) {
         grabCommandCount = 1;
+        previousCommand = currentCommand;  // Capture previous state
       } else {
         grabCommandCount++;
       }
@@ -359,6 +359,11 @@ void receiveEvent(int howMany) {
 
       grabCommandCount = 0;
       dropCommandCount = 0;
+      
+      // Only capture previousCommand when actually changing to a different command
+      if (currentCommand != cmd) {
+        previousCommand = currentCommand;
+      }
       currentCommand = cmd;
     }
   }
