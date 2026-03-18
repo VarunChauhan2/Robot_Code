@@ -1,5 +1,6 @@
 #include <Wire.h>
-#include <Adafruit_MPU6050.h>
+#include <Adafruit_LSM6DSOX.h>
+#include <Adafruit_LIS3MDL.h>
 #include <Adafruit_Sensor.h>
 #include <Servo.h>
 
@@ -22,7 +23,8 @@ Servo gripperServo;  // Pin 10
 Servo liftServo;     // Pin 11
 
 // IMU
-Adafruit_MPU6050 mpu;
+Adafruit_LSM6DSOX lsm6ds;
+Adafruit_LIS3MDL lis3mdl;
 
 // ============================================================================
 // I2C & COMMUNICATION
@@ -49,8 +51,8 @@ int lastError = 0;
 
 int consecutiveTurnCount = 0;
 const int turnThreshold = 10;
-const int TURN_BACKUP_TIME = 1000;    // 1 second backup duration
-const int TURN_BACKUP_SPEED = 75;     // Half of baseSpeed (150)
+const int TURN_BACKUP_TIME = 9000;    // 10 second backup duration
+const int TURN_BACKUP_SPEED = 100;     // Half of baseSpeed (150)
 
 // ============================================================================
 // GRAB SEQUENCE
@@ -60,8 +62,6 @@ volatile int grabXOffset = 0;
 volatile int grabYOffset = 0;
 int grabPhase = 0;
 unsigned long grabPhaseTime = 0;
-float grabTurnAngle = 0;
-unsigned long grabTurnLastTime = 0;
 int grabCommandCount = 0;
 int lastGrabError = 0;
 
@@ -87,6 +87,18 @@ const int dropThreshold = 5;
 
 bool dropSequenceCompleted = false;
 
+// ============================================================================
+// MAGNETOMETER CALIBRATION & FUSION
+// ============================================================================
+
+// Magnetometer calibration offsets and scales
+float mag_offset_x = 0, mag_offset_y = 0, mag_offset_z = 0;
+float mag_scale_x = 1, mag_scale_y = 1, mag_scale_z = 1;
+
+// Heading fusion
+float current_heading = 0;      // Fused heading in degrees (0-360)
+unsigned long last_heading_time = 0;
+const float heading_alpha = 0.60; // Complementary filter weight (0.60 = 60% gyro, 40% mag) - strong mag correction to catch drift
 
 // ============================================================================
 // SETUP
@@ -115,11 +127,26 @@ void setup() {
   Wire.onRequest(requestEvent);
 
   // Initialize IMU
-  if (!mpu.begin()) {
-    Serial.println("Failed to find MPU6050 chip");
+  bool lsm6ds_success, lis3mdl_success;
+  lsm6ds_success = lsm6ds.begin_I2C();
+  lis3mdl_success = lis3mdl.begin_I2C();
+  
+  if (!lsm6ds_success) {
+    Serial.println("Failed to find LSM6DS chip");
+  }
+  if (!lis3mdl_success) {
+    Serial.println("Failed to find LIS3MDL chip");
+  }
+  if (!(lsm6ds_success && lis3mdl_success)) {
     while (1) delay(10);
   }
-  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  
+  Serial.println("LSM6DS and LIS3MDL Found!");
+  lsm6ds.setGyroRange(LSM6DS_GYRO_RANGE_500_DPS);
+  
+  // Calibrate magnetometer
+  calibrateMagnetometer();
+  last_heading_time = millis();
 
   lastHeartbeat = millis();
   Serial.println("System Ready.");
@@ -137,23 +164,39 @@ void loop() {
   }
 
   switch (currentCommand) {
+    case 0:
+      // Idle, no output to reduce clutter
+      break;
+      
     case 1: // FOLLOW LINE
       runPDLogic(i2cOffset, i2cDirection);
       break;
 
     case 2: // TURN LEFT
       if (consecutiveTurnCount >= turnThreshold) {
+        Serial.println(F("CMD: TURN LEFT"));
         executeArc(200, 0.4, true);
         consecutiveTurnCount = 0;
-        currentCommand = 0;  // Wait for new command
+        currentCommand = 0;
+      } else {
+        Serial.print(F("TURN LEFT queued: "));
+        Serial.print(consecutiveTurnCount);
+        Serial.print("/");
+        Serial.println(turnThreshold);
       }
       break;
 
     case 3: // TURN RIGHT
       if (consecutiveTurnCount >= turnThreshold) {
+        Serial.println(F("CMD: TURN RIGHT"));
         executeArc(200, 0.4, false);
         consecutiveTurnCount = 0;
-        currentCommand = 0;  // Wait for new command
+        currentCommand = 0;
+      } else {
+        Serial.print(F("TURN RIGHT queued: "));
+        Serial.print(consecutiveTurnCount);
+        Serial.print("/");
+        Serial.println(turnThreshold);
       }
       break;
 
@@ -180,10 +223,17 @@ void receiveEvent(int howMany) {
   lastHeartbeat = millis();
   int flush;
 
+  Serial.print(F("I2C: "));
+  Serial.print(howMany);
+  Serial.println(F(" bytes"));
+
   // ---- 4-byte commands: Follow or Grab ----
   if (howMany == 4) {
     flush = Wire.read();
     int cmd = Wire.read();
+    
+    Serial.print(F("4-byte cmd: "));
+    Serial.println(cmd);
 
     // If currently in grab sequence, only accept grab updates
     if (currentCommand == 4) {
@@ -199,7 +249,16 @@ void receiveEvent(int howMany) {
 
     // Handle follow command
     if (cmd == 1) {
-      if (currentCommand != 1) lastError = 0;
+      if (currentCommand != 1) {
+        Serial.println(F("CMD: FOLLOW LINE"));
+        lastError = 0;
+      }
+      if (consecutiveTurnCount > 0) {
+        Serial.print(F("Turn buffer lost: "));
+        Serial.print(consecutiveTurnCount);
+        Serial.println(F(" counts cleared by FOLLOW"));
+      }
+      consecutiveTurnCount = 0;
       currentCommand = cmd;
       i2cOffset = Wire.read();
       i2cDirection = Wire.read();
@@ -228,6 +287,8 @@ void receiveEvent(int howMany) {
     }
     // Unknown 4-byte command
     else {
+      Serial.print(F("Unknown 4-byte cmd: "));
+      Serial.println(cmd);
       Wire.read();
       Wire.read();
       grabCommandCount = 0;
@@ -237,6 +298,9 @@ void receiveEvent(int howMany) {
   else if (howMany == 2) {
     flush = Wire.read();
     int cmd = Wire.read();
+    
+    Serial.print(F("2-byte cmd: "));
+    Serial.println(cmd);
 
     // Ignore all non-grab commands during grab sequence
     if (currentCommand == 4) {
@@ -267,7 +331,15 @@ void receiveEvent(int howMany) {
     else {
       if (cmd == 2 || cmd == 3) {
         consecutiveTurnCount++;
+        Serial.print(F("TURN CMD: ")); 
+        Serial.println(cmd == 2 ? F("LEFT") : F("RIGHT"));
       } else {
+        Serial.print(F("Unknown 2-byte cmd: "));
+        Serial.println(cmd);
+        if (consecutiveTurnCount > 0) {
+          Serial.print(F("Turn buffer cleared: "));
+          Serial.println(consecutiveTurnCount);
+        }
         consecutiveTurnCount = 0;
       }
 
@@ -275,6 +347,10 @@ void receiveEvent(int howMany) {
       dropCommandCount = 0;
       currentCommand = cmd;
     }
+  }
+  else {
+    Serial.print(F("Unexpected byte count: "));
+    Serial.println(howMany);
   }
 }
 
@@ -303,41 +379,111 @@ void runPDLogic(int offset, int dir) {
 // ============================================================================
 
 void executeArc(int outerSpeed, float ratio, bool isLeft) {
+  // Clear any leftover grab/drop state before turn
+  grabPhase = 0;
+  dropPhase = 0;
+  grabSequenceCompleted = false;
+  dropSequenceCompleted = false;
+  
   int innerSpeed = outerSpeed * ratio;
-  float angleZ = 0;
-  unsigned long lastTime = millis();
+  float target_rotation = 90.0;  // Always rotate 90 degrees, measured relative to turn start
+  float current_rotation = 0.0;  // Accumulated rotation since turn start
+  unsigned long last_gyro_time = millis();
+  
+  Serial.print(F("TURN START: "));
+  Serial.println(isLeft ? "LEFT" : "RIGHT");
+  
+  unsigned long settleStartTime = millis();
+  while (millis() - settleStartTime < 5750) {
+    sensors_event_t accel, gyro, mag, temp;
+    lsm6ds.getEvent(&accel, &gyro, &temp);
+    
+    // Move forward straight
+    moveMotors(150, 150);
+  }
+  stopMotors();
 
-  delay(6000);  // Camera mount settling time
-
-  // Execute 90-degree turn
-  while (abs(angleZ) < 90.0) {
-    sensors_event_t a, g, temp;
-    mpu.getEvent(&a, &g, &temp);
-
+  // Execute 90-degree turn using only gyro (relative rotation measurement)
+  last_gyro_time = millis();
+  current_rotation = 0.0;
+  
+  while (true) {
+    sensors_event_t accel, gyro, mag, temp;
+    lsm6ds.getEvent(&accel, &gyro, &temp);
+    
+    // Measure rotation using only gyro - no absolute heading reference
     unsigned long now = millis();
-    float dt = (now - lastTime) / 1000.0;
-    lastTime = now;
-    angleZ += (g.gyro.z * 57.2958) * dt;
+    float dt = (now - last_gyro_time) / 1000.0;
+    last_gyro_time = now;
+    
+    // Integrate gyro Z to get relative rotation
+    // Positive gyro_z = clockwise, negative = counterclockwise
+    float rotation_this_frame = gyro.gyro.z * 57.2958 * dt;  // Convert rad/s to deg
+    
+    // For right turns, we expect to see negative gyro (counterclockwise)
+    // For left turns, we expect positive gyro (clockwise)
+    // Track absolute value of rotation
+    current_rotation += abs(rotation_this_frame);
+    
+    float rotation_error = target_rotation - current_rotation;
+    
+    Serial.print(F("Rotation: "));
+    Serial.print(current_rotation);
+    Serial.print(F(" | Target: "));
+    Serial.print(target_rotation);
+    Serial.print(F(" | Error: "));
+    Serial.println(rotation_error);
 
-    Serial.println(angleZ);
+    // Check if we've rotated enough
+    if (rotation_error < 1.5) {  // Tighter tolerance
+      break;
+    }
+
+    // Speed damping: reduce speed as we approach target to prevent overshoot
+    float speedMultiplier = 1.0;
+    if (rotation_error < 8.0) {
+      speedMultiplier = 0.3 + (0.7 * (rotation_error - 1.5) / 6.5);
+    }
+    
+    int adjustedInnerSpeed = max(50, (int)(innerSpeed * speedMultiplier));
+    int adjustedOuterSpeed = max(50, (int)(outerSpeed * speedMultiplier));
 
     if (isLeft) {
-      moveMotors(innerSpeed, outerSpeed);
+      moveMotors(adjustedInnerSpeed, adjustedOuterSpeed);
     } else {
-      moveMotors(outerSpeed, innerSpeed);
+      moveMotors(adjustedOuterSpeed, adjustedInnerSpeed);
     }
   }
 
   // Stop after turn
-  lastError = 0;
   stopMotors();
+  delay(500);  // Brief settle time after turn
 
   // Backup straight to re-center tape in camera FOV
+  Serial.println(F("BACKUP: Starting 10-second backup..."));
   unsigned long backupStartTime = millis();
   while (millis() - backupStartTime < TURN_BACKUP_TIME) {
+    sensors_event_t accel, gyro, mag, temp;
+    lsm6ds.getEvent(&accel, &gyro, &temp);
+    getFusedHeading(gyro.gyro.z);  // Keep fused heading updated during backup
+    
     moveMotors(-TURN_BACKUP_SPEED, -TURN_BACKUP_SPEED);
+    
+    // Debug: print backup progress every 2 seconds
+    unsigned long elapsedBackup = millis() - backupStartTime;
+    if (elapsedBackup % 2000 < 100) {
+      Serial.print(F("BACKUP: "));
+      Serial.print(elapsedBackup);
+      Serial.println(F("ms elapsed"));
+    }
   }
   stopMotors();
+  Serial.println(F("BACKUP: Complete"));
+  
+  // Reset state after turn and backup complete
+  grabPhase = 0;
+  dropPhase = 0;
+  currentCommand = 0;
 }
 
 
@@ -348,6 +494,9 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
 void executeGrabSequence(int xOffset, int yOffset) {
   // Phase 0: Lateral centering + forward movement
   if (grabPhase == 0) {
+    if (grabCommandCount == grabThreshold) {
+      Serial.println(F("CMD: GRAB - Phase 0"));
+    }
     float currentError = xOffset;
     float derivative = currentError - lastGrabError;
     int xAdjustment = (currentError * grabKp) + (derivative * grabKd);
@@ -359,6 +508,7 @@ void executeGrabSequence(int xOffset, int yOffset) {
     moveMotors(leftMotor, rightMotor);
 
     if (abs(yOffset) <= 2) {
+      Serial.println(F("CMD: GRAB - Phase 1"));
       grabPhase = 1;
       grabPhaseTime = millis();
     }
@@ -368,31 +518,44 @@ void executeGrabSequence(int xOffset, int yOffset) {
     moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);
 
     if (millis() - grabPhaseTime >= GRAB_FINAL_PUSH_TIME) {
+      Serial.println(F("CMD: GRAB - Phase 2"));
       grabPhase = 2;
       stopMotors();
     }
   }
   // Phase 2: Execute gripper
   else if (grabPhase == 2) {
+    Serial.println(F("CMD: GRAB - Phase 3 (Spin)"));
     executeGripper(true);
     grabPhase = 3;
-    grabTurnAngle = 0;
-    grabTurnLastTime = millis();
   }
   // Phase 3: 180-degree spin turn
   else if (grabPhase == 3) {
-    sensors_event_t a, g, temp;
-    mpu.getEvent(&a, &g, &temp);
-
-    unsigned long now = millis();
-    float dt = (now - grabTurnLastTime) / 1000.0;
-    grabTurnLastTime = now;
-    grabTurnAngle += (g.gyro.z * 57.2958) * dt;
+    sensors_event_t accel, gyro, mag, temp;
+    lsm6ds.getEvent(&accel, &gyro, &temp);
+    
+    // Update fused heading
+    getFusedHeading(gyro.gyro.z);
+    
+    // Calculate heading change since start of phase 3
+    // Note: we need to track the initial heading for phase 3
+    // This is a simplified approach - store initial heading globally
+    static float phase3_start_heading = 0;
+    static bool phase3_initialized = false;
+    
+    if (!phase3_initialized) {
+      phase3_start_heading = current_heading;
+      phase3_initialized = true;
+    }
+    
+    float heading_change = getHeadingChange(phase3_start_heading + 180);
 
     moveMotors(100, -100);  // Spin left
 
-    if (abs(grabTurnAngle) >= 180.0) {
+    if (abs(heading_change) < 5.0) {  // Within 5 degrees of 180 degrees
+      Serial.println(F("CMD: GRAB - Complete"));
       stopMotors();
+      phase3_initialized = false;  // Reset for next grab
       currentCommand = 0;
       grabSequenceCompleted = true;
     }
@@ -407,6 +570,9 @@ void executeGrabSequence(int xOffset, int yOffset) {
 void executeDropSequence() {
   // Phase 0: Initialize motor delay
   if (dropPhase == 0) {
+    if (dropCommandCount == dropThreshold) {
+      Serial.println(F("CMD: DROP - Phase 0"));
+    }
     moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);
     dropPhaseTime = millis();
     dropPhase = 1;
@@ -414,6 +580,7 @@ void executeDropSequence() {
   // Phase 1: Wait for motor delay to complete
   else if (dropPhase == 1) {
     if (millis() - dropPhaseTime >= DROP_MOTOR_DELAY_TIME) {
+      Serial.println(F("CMD: DROP - Phase 1"));
       stopMotors();
       dropPhase = 2;
     } else {
@@ -422,6 +589,7 @@ void executeDropSequence() {
   }
   // Phase 2: Execute gripper drop
   else if (dropPhase == 2) {
+    Serial.println(F("CMD: DROP - Complete"));
     executeGripper(false);
     currentCommand = 0;
     dropSequenceCompleted = true;
@@ -492,4 +660,77 @@ void stopMotors() {
   digitalWrite(ain2, HIGH);
   digitalWrite(bin1, HIGH);
   digitalWrite(bin2, HIGH);
+}
+
+// ============================================================================
+// MAGNETOMETER CALIBRATION (HARDCODED VALUES)
+// ============================================================================
+
+void calibrateMagnetometer() {
+  // Hardcoded calibration values - obtained from initial calibration routine
+  // To recalibrate: Use the calibration sketch, rotate robot in all directions,
+  // and copy the printed offsets and scales here.
+  
+  mag_offset_x = -10.742474;
+  mag_offset_y = -46.499561;
+  mag_offset_z = -89.608306;
+  
+  mag_scale_x = 0.685544;
+  mag_scale_y = 0.770123;
+  mag_scale_z = 4.118421;
+  
+  // Calibration values loaded successfully
+}
+
+// ============================================================================
+// HEADING FUSION (Gyro + Magnetometer)
+// ============================================================================
+
+float getFusedHeading(float gyro_z) {
+  unsigned long now = millis();
+  float dt = (now - last_heading_time) / 1000.0;
+  last_heading_time = now;
+  
+  // Update heading from gyro (degrees per second to degrees)
+  float gyro_heading = current_heading + (gyro_z * 57.2958) * dt;
+  
+  // Get magnetometer heading
+  sensors_event_t mag;
+  lis3mdl.getEvent(&mag);
+  
+  // Apply calibration to magnetometer data
+  float mag_x = (mag.magnetic.x - mag_offset_x) * mag_scale_x;
+  float mag_y = (mag.magnetic.y - mag_offset_y) * mag_scale_y;
+  
+  // Calculate heading from magnetometer (in degrees, 0-360)
+  float mag_heading = atan2(mag_y, mag_x) * 57.2958; // Convert radians to degrees
+  if (mag_heading < 0) mag_heading += 360;
+  
+  // Handle wrap-around when crossing 0 degrees
+  float heading_diff = mag_heading - gyro_heading;
+  if (heading_diff > 180) heading_diff -= 360;
+  if (heading_diff < -180) heading_diff += 360;
+  
+  // Complementary filter: combine gyro (fast, drifts) with mag (accurate, noisy)
+  current_heading = gyro_heading + (heading_diff * (1.0 - heading_alpha));
+  
+  // Normalize to 0-360 range
+  if (current_heading < 0) current_heading += 360;
+  if (current_heading >= 360) current_heading -= 360;
+  
+  return current_heading;
+}
+
+// ============================================================================
+// HEADING CHANGE CALCULATOR
+// ============================================================================
+
+float getHeadingChange(float target_angle) {
+  float diff = target_angle - current_heading;
+  
+  // Normalize to -180 to 180 range
+  if (diff > 180) diff -= 360;
+  if (diff < -180) diff += 360;
+  
+  return diff;
 }
