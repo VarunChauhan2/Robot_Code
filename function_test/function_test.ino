@@ -98,7 +98,11 @@ bool testStarted = false;
 void setup() {
   Serial.begin(9600);
   Serial.println("\n\n=== FORWARD MOVEMENT TEST ===");
-  Serial.printf("Speed: %d, Duration: %lu ms\n", testSpeed, testDuration);
+  Serial.print("Speed: ");
+  Serial.print(testSpeed);
+  Serial.print(", Duration: ");
+  Serial.print(testDuration);
+  Serial.println(" ms");
   
   // Initialize motor pins
   pinMode(pwma, OUTPUT);
@@ -145,9 +149,12 @@ void loop() {
   unsigned long elapsedTime = millis() - testStartTime;
   if (elapsedTime >= testDuration) {
     stopMotors();
-    Serial.printf("[COMPLETE] Movement finished after %lu ms\n", elapsedTime);
-    Serial.printf("Distance estimate: ~%.1f cm\n", 
-                  (elapsedTime / 1000.0) * 5.0 * (testSpeed / 150.0));
+    Serial.print("[COMPLETE] Movement finished after ");
+    Serial.print(elapsedTime);
+    Serial.println(" ms");
+    Serial.print("Distance estimate: ~");
+    Serial.print((elapsedTime / 1000.0) * 5.0 * (testSpeed / 150.0));
+    Serial.println(" cm");
     
     // Loop forever after test completes
     while(1) {
