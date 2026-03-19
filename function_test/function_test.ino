@@ -90,7 +90,7 @@ float gyro_bias_x = 0, gyro_bias_y = 0, gyro_bias_z = 0;
 // ============================================================================
 
 int testSpeed = 150;             // Speed to move forward (0-255)
-unsigned long testDuration = 5000; // Duration in milliseconds (ms)
+unsigned long testDuration = 1900; // Duration in milliseconds (ms)
 unsigned long testStartTime = 0;
 bool testStarted = false;
 
@@ -118,8 +118,8 @@ void setup() {
   // Initialize servos
   gripperServo.attach(10);
   liftServo.attach(11);
-  gripperServo.write(90);
-  liftServo.write(90);
+  gripperServo.write(10);
+  liftServo.write(30);
   
   // Initialize IMU
   if (!lsm6ds.begin_I2C()) {
