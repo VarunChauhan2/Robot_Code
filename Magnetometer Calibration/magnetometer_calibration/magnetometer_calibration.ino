@@ -94,7 +94,7 @@ void runCalibration() {
   float min_z = 1000, max_z = -1000;
   
   unsigned long cal_start = millis();
-  unsigned long cal_duration = 20000;
+  unsigned long cal_duration = 25000;
   unsigned long last_print = millis();
   
   while (millis() - cal_start < cal_duration) {

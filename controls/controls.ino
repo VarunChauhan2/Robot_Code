@@ -54,9 +54,12 @@ int consecutiveTurnCount = 0;
 const int turnThreshold = 10;
 const int TURN_BACKUP_TIME = 7000;    // 7 second backup duration 
 const int TURN_BACKUP_SPEED = 100;    // Backup speed
-const int TURN_SETTLE_FROM_FOLLOW = 6750;  // 6.75s settling after line-follow
-const int TURN_SETTLE_FROM_BACKUP = 1000;   // 0.5s settling after backup
-const int FOLLOW_IGNORE_TIME = TURN_SETTLE_FROM_BACKUP;  // Ignore follow commands during backup settling (prevent errant corrections)
+const int TURN_SETTLE_FROM_FOLLOW = 7500;  // 6.75s settling after line-follow
+const int TURN_SETTLE_FROM_BACKUP = 4500;   // 0.5s settling after backup
+const int FOLLOW_IGNORE_TIME = 500;  // Ignore follow commands during backup settling (prevent errant corrections)
+const float TURN_ANGLE_OFFSET_RIGHT = 2.5;  // Extra degrees for right turns (undershoot compensation)
+const float TURN_ANGLE_OFFSET_LEFT = -2.5;  // Reduce degrees for left turns (overshoot compensation)
+
 // ============================================================================
 // GRAB SEQUENCE
 // ============================================================================
@@ -97,6 +100,9 @@ bool dropSequenceCompleted = false;
 // Magnetometer calibration offsets and scales
 float mag_offset_x = 0, mag_offset_y = 0, mag_offset_z = 0;
 float mag_scale_x = 1, mag_scale_y = 1, mag_scale_z = 1;
+
+// Gyro bias calibration
+float gyro_bias_x = 0, gyro_bias_y = 0, gyro_bias_z = 0;
 
 // Heading fusion
 float current_heading = 0;      // Fused heading in degrees (0-360)
@@ -149,6 +155,10 @@ void setup() {
   
   // Calibrate magnetometer
   calibrateMagnetometer();
+  
+  // Calibrate gyro
+  calibrateGyro();
+  
   last_heading_time = millis();
 
   lastHeartbeat = millis();
@@ -403,6 +413,11 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
   bool recentBackup = (lastTurnBackupTime > 0 && (millis() - lastTurnBackupTime) < BACKUP_WINDOW);
   int settleTime = recentBackup ? TURN_SETTLE_FROM_BACKUP : TURN_SETTLE_FROM_FOLLOW;
   
+  // Add extra 500ms settle time for back-to-back left turns
+  if (isLeft && recentBackup) {
+    settleTime += 1000;
+  }
+  
   if (recentBackup) {
     Serial.println(F("SETTLE: 0.5s (recent backup, camera re-acquired)"));
   } else {
@@ -410,7 +425,8 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
   }
   
   int innerSpeed = outerSpeed * ratio;
-  float target_rotation = 90.0;  // Always rotate 90 degrees, measured relative to turn start
+  float angleOffset = isLeft ? TURN_ANGLE_OFFSET_LEFT : TURN_ANGLE_OFFSET_RIGHT;
+  float target_rotation = 90.0 + angleOffset;  // Target rotation with direction-specific offset
   float current_rotation = 0.0;  // Accumulated rotation since turn start
   unsigned long last_gyro_time = millis();
   
@@ -443,7 +459,8 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
     
     // Integrate gyro Z to get relative rotation
     // Positive gyro_z = clockwise, negative = counterclockwise
-    float rotation_this_frame = gyro.gyro.z * 57.2958 * dt;  // Convert rad/s to deg
+    // Subtract gyro bias to get actual rotation
+    float rotation_this_frame = (gyro.gyro.z - gyro_bias_z) * 57.2958 * dt;  // Convert rad/s to deg
     
     // For right turns, we expect to see negative gyro (counterclockwise)
     // For left turns, we expect positive gyro (clockwise)
@@ -492,7 +509,7 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
     lsm6ds.getEvent(&accel, &gyro, &temp);
     getFusedHeading(gyro.gyro.z);  // Keep fused heading updated during backup
     
-    moveMotorsStraight(-TURN_BACKUP_SPEED, true);
+    moveMotorsStraight(TURN_BACKUP_SPEED, true);
     
     // Debug: print backup progress every 2 seconds
     unsigned long elapsedBackup = millis() - backupStartTime;
@@ -699,15 +716,55 @@ void calibrateMagnetometer() {
   // To recalibrate: Use the calibration sketch, rotate robot in all directions,
   // and copy the printed offsets and scales here.
   
-  mag_offset_x = -10.742474;
-  mag_offset_y = -46.499561;
-  mag_offset_z = -89.608306;
-  
-  mag_scale_x = 0.685544;
-  mag_scale_y = 0.770123;
-  mag_scale_z = 4.118421;
+  mag_offset_x = -6.452794;
+  mag_offset_y = -48.063430;
+  mag_offset_z = -95.184158;
+
+  mag_scale_x = 0.730745;
+  mag_scale_y = 0.794111;
+  mag_scale_z = 2.686275;
   
   // Calibration values loaded successfully
+}
+
+// ============================================================================
+// GYRO CALIBRATION
+// ============================================================================
+
+void calibrateGyro() {
+  // Measure gyro bias while robot is stationary
+  // Collect 100 samples and average them to get the bias offset
+  
+  Serial.println("Calibrating gyro... keep robot stationary!");
+  delay(1000);
+  
+  float sum_x = 0, sum_y = 0, sum_z = 0;
+  const int NUM_SAMPLES = 100;
+  
+  for (int i = 0; i < NUM_SAMPLES; i++) {
+    sensors_event_t accel, gyro, temp;
+    lsm6ds.getEvent(&accel, &gyro, &temp);
+    
+    sum_x += gyro.gyro.x;
+    sum_y += gyro.gyro.y;
+    sum_z += gyro.gyro.z;
+    
+    delay(10);  // Small delay between samples
+  }
+  
+  // Calculate average bias
+  gyro_bias_x = sum_x / NUM_SAMPLES;
+  gyro_bias_y = sum_y / NUM_SAMPLES;
+  gyro_bias_z = sum_z / NUM_SAMPLES;
+  
+  Serial.print("Gyro bias - X: ");
+  Serial.print(gyro_bias_x);
+  Serial.print(" Y: ");
+  Serial.print(gyro_bias_y);
+  Serial.print(" Z: ");
+  Serial.println(gyro_bias_z);
+  
+  Serial.println("Gyro calibration complete!");
 }
 
 // ============================================================================
@@ -767,11 +824,12 @@ void moveMotorsStraight(int speed, bool backward) {
   // Move with gyro-guided correction to keep perfectly straight
   // If robot is rotating, compensate with motor speed adjustment
   
-  sensors_event_t gyro;
+  sensors_event_t accel, gyro, temp;
   lsm6ds.getEvent(&accel, &gyro, &temp);
   
   // If rotating (gyro_z != 0), apply small correction
-  float correctionFactor = 1.0 + (gyro.gyro.z * 0.005);  // Scale gyro reading
+  // Subtract gyro bias for accurate correction
+  float correctionFactor = 1.0 + ((gyro.gyro.z - gyro_bias_z) * 0.005);  // Scale calibrated gyro reading
   
   int leftSpeed = speed * correctionFactor;
   int rightSpeed = speed / correctionFactor;
