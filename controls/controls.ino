@@ -130,6 +130,11 @@ void setup() {
   liftServo.write(30);
   gripperServo.write(10);
 
+    //delay(500);
+    //gripperServo.detach();
+    //liftServo.detach();
+
+
   // Initialize I2C communication
   Wire.begin(ARDUINO_I2C_ADDR);
   Wire.onReceive(receiveEvent);
