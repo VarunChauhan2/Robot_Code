@@ -82,6 +82,9 @@ float mag_scale_x = 1, mag_scale_y = 1, mag_scale_z = 1;
 float current_heading = 0;
 const float heading_alpha = 0.60;
 
+// Gyro bias calibration
+float gyro_bias_x = 0, gyro_bias_y = 0, gyro_bias_z = 0;
+
 // ============================================================================
 // TEST VARIABLES - EDIT THESE TO CHANGE TEST BEHAVIOR
 // ============================================================================
@@ -142,7 +145,7 @@ void loop() {
     Serial.println("\n[START] Moving forward...");
     testStartTime = millis();
     testStarted = true;
-    moveMotorsStraight(testSpeed, false);
+    moveMotors(testSpeed, testSpeed);
   }
   
   // Check if test duration has elapsed
@@ -166,19 +169,37 @@ void loop() {
 // ...existing code...
 
 void moveMotors(int left, int right) {
-  // Clamp values
-  left = constrain(left, 0, 255);
-  right = constrain(right, 0, 255);
-  
-  // Left motor (Motor B)
-  digitalWrite(bin1, LOW);
-  digitalWrite(bin2, HIGH);
-  analogWrite(pwmb, left);
-  
-  // Right motor (Motor A)
-  digitalWrite(ain1, LOW);
-  digitalWrite(ain2, HIGH);
-  analogWrite(pwma, right);
+  // Set left motor direction (positive = forward, negative = reverse)
+  if (left >= 0) {
+    digitalWrite(bin1, HIGH);
+    digitalWrite(bin2, LOW);
+  } else {
+    digitalWrite(bin1, LOW);
+    digitalWrite(bin2, HIGH);
+  }
+  int leftSpeed = abs(left);
+
+  // Set right motor direction (positive = forward, negative = reverse)
+  if (right >= 0) {
+    digitalWrite(ain1, HIGH);
+    digitalWrite(ain2, LOW);
+  } else {
+    digitalWrite(ain1, LOW);
+    digitalWrite(ain2, HIGH);
+  }
+  int rightSpeed = abs(right);
+
+  // Scale if either motor exceeds PWM max
+  int maxVal = max(leftSpeed, rightSpeed);
+  if (maxVal > 255) {
+    float scale = 255.0 / maxVal;
+    leftSpeed *= scale;
+    rightSpeed *= scale;
+  }
+
+  // Apply scaled speeds
+  analogWrite(pwma, constrain(rightSpeed, 0, 255));
+  analogWrite(pwmb, constrain(leftSpeed, 0, 255));
 }
 
 void stopMotors() {
@@ -191,22 +212,21 @@ void stopMotors() {
 }
 
 void moveMotorsStraight(int speed, bool backward) {
-  speed = constrain(speed, 0, 255);
+  // Move with gyro-guided correction to keep perfectly straight
+  // If robot is rotating, compensate with motor speed adjustment
   
-  if (backward) {
-    digitalWrite(ain1, HIGH);
-    digitalWrite(ain2, LOW);
-    digitalWrite(bin1, HIGH);
-    digitalWrite(bin2, LOW);
-  } else {
-    digitalWrite(ain1, LOW);
-    digitalWrite(ain2, HIGH);
-    digitalWrite(bin1, LOW);
-    digitalWrite(bin2, HIGH);
-  }
+  sensors_event_t accel, gyro, temp;
+  lsm6ds.getEvent(&accel, &gyro, &temp);
   
-  analogWrite(pwma, speed);
-  analogWrite(pwmb, speed);
+  // If rotating (gyro_z != 0), apply small correction
+  // Subtract gyro bias for accurate correction
+  float correctionFactor = 1.0 + ((gyro.gyro.z - gyro_bias_z) * 0.005);  // Scale calibrated gyro reading
+  
+  int leftSpeed = speed * correctionFactor;
+  int rightSpeed = speed / correctionFactor;
+  
+  moveMotors(backward ? -leftSpeed : leftSpeed, 
+             backward ? -rightSpeed : rightSpeed);
 }
 
 void executeGripper(bool grab) {
