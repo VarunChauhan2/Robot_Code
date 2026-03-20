@@ -93,6 +93,19 @@ void loop() {
     delay(500);
     executeGripper(false);  // Lower lift and open gripper
     
+    // Lift the gripper (without closing)
+    delay(500);
+    lift.write(120);  // Raise lift
+    Serial.println("[LIFTED] Lift raised");
+    
+    // Move forward for 3 seconds
+    delay(500);
+    Serial.println("[MOVING] Moving forward for 3 seconds...");
+    moveMotors(testSpeed, testSpeed);
+    delay(3000);
+    stopMotors();
+    Serial.println("[STOP] Forward movement complete");
+    
     // Loop forever after test completes
     while(1) {
       delay(1000);
