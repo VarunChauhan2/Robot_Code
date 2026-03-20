@@ -40,8 +40,8 @@ int bin1 = 2;
 int bin2 = 3;
 
 // Servos
-Servo gripperServo;  // Pin 10
-Servo liftServo;     // Pin 11
+Servo grip;  // Gripper servo (Pin 10)
+Servo lift;  // Lift servo (Pin 11)
 
 // IMU
 Adafruit_LSM6DSOX lsm6ds;
@@ -116,10 +116,10 @@ void setup() {
   pinMode(bin2, OUTPUT);
   
   // Initialize servos
-  gripperServo.attach(10);
-  liftServo.attach(11);
-  gripperServo.write(10);
-  liftServo.write(30);
+  grip.attach(10);
+  lift.attach(11);
+  grip.write(10);    // Gripper open
+  lift.write(30);    // Lift down
   
   // Initialize IMU
   if (!lsm6ds.begin_I2C()) {
@@ -158,6 +158,21 @@ void loop() {
     Serial.print("Distance estimate: ~");
     Serial.print((elapsedTime / 1000.0) * 5.0 * (testSpeed / 150.0));
     Serial.println(" cm");
+    
+    // Servo sequence: position -> grip -> lift -> lower -> open
+    lift.write(30);      // Lower lift
+    delay(500);
+    grip.write(10);      // Open gripper
+    delay(3000);
+    
+    grip.write(100);     // Close gripper
+    delay(500);
+    lift.write(120);     // Raise lift
+    delay(3000);
+    
+    lift.write(30);      // Lower lift
+    delay(500);
+    grip.write(10);      // Open gripper
     
     // Loop forever after test completes
     while(1) {
@@ -231,9 +246,9 @@ void moveMotorsStraight(int speed, bool backward) {
 
 void executeGripper(bool grab) {
   if (grab) {
-    gripperServo.write(0);   // Close gripper
+    grip.write(100);  // Close gripper
   } else {
-    gripperServo.write(180); // Open gripper
+    grip.write(10);   // Open gripper
   }
 }
 
