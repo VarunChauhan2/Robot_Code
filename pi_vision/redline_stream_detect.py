@@ -263,7 +263,11 @@ def detect_green_tape_box(mask_green, mask_red, frame_height, frame_width):
         cv.drawContours(green_box_mask, [box_corners], 0, 255, -1)
         
         # Shrink the interior: erode the mask to get interior-only region
-        interior_margin = max(3, int(np.sqrt(rotated_box_area) * 0.1))
+        # Use a smaller margin - just enough to avoid the edges of the box (5% of smallest box dimension)
+        box_width = rotated_rect[1][0]
+        box_height = rotated_rect[1][1]
+        min_box_dim = min(box_width, box_height)
+        interior_margin = max(2, int(min_box_dim * 0.05))
         kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (interior_margin * 2 + 1, interior_margin * 2 + 1))
         green_interior_mask = cv.erode(green_box_mask, kernel, iterations=1)
         
@@ -271,7 +275,8 @@ def detect_green_tape_box(mask_green, mask_red, frame_height, frame_width):
         red_interior = cv.bitwise_and(mask_red, green_interior_mask)
         red_pixels_interior = np.count_nonzero(red_interior)
         
-        green_under_red = red_pixels_interior >= 30
+        # Lower threshold to 10 pixels - more reliable for detecting red under green
+        green_under_red = red_pixels_interior >= 10
         
         return True, green_under_red
     
@@ -586,11 +591,13 @@ def process_frame(frame, curvature_threshold=0.003, enable_bullseye=True, enable
         mask_green_full = filter_mask_by_size(mask_green_full, min_area=30)
         
         # Create red mask on full frame
+        # Use gentler filtering for red detection to catch red under green
         mask_red_full = cv.inRange(hsv_full, red_lower, red_upper)
         mask_red_full |= cv.inRange(hsv_full, red_lower_2, red_upper_2)
         mask_red_full = cv.morphologyEx(mask_red_full, cv.MORPH_CLOSE, kernel)
         mask_red_full = cv.morphologyEx(mask_red_full, cv.MORPH_OPEN, kernel)
-        mask_red_full = filter_mask_by_size(mask_red_full, min_area=200)
+        # Use smaller min_area for green box detection since red under green may be fragmented
+        mask_red_full = filter_mask_by_size(mask_red_full, min_area=50)
         
         green_detected, green_under_red = detect_green_tape_box(
             mask_green_full, mask_red_full, frame_height, frame_width
