@@ -527,12 +527,21 @@ def process_frame(frame, curvature_threshold=0.003, enable_bullseye=True, enable
     is_turn, turn_type, curvature, _, _ = detect_curved_turn_adaptive(
         frame_turn, mask_turn, adaptive_threshold=True, base_threshold=curvature_threshold
     )
-    if is_turn:
-        on_turn_detected(turn_type, curvature)
     
     results['is_turn'] = is_turn
     results['turn_type'] = turn_type
     results['curvature'] = curvature
+    
+    # ===== EARLY BULLSEYE CHECK (to suppress turn warning if bullseye detected) =====
+    bullseye_detected_early = False
+    if enable_bullseye:
+        bullseye_detected_early, _, _ = detect_bullseye(
+            hsv_full, frame_height, frame_width, min_area=200
+        )
+    
+    # Only print turn warning if no bullseye detected
+    if is_turn and not bullseye_detected_early:
+        on_turn_detected(turn_type, curvature)
     
     # ===== CENTERLINE ANALYSIS ON CROPPED CENTER 1/3 =====
     crop_top = frame_height // 3
