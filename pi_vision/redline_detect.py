@@ -251,7 +251,7 @@ def detect_green_tape_box(mask_green, mask_red, frame_height, frame_width, outpu
         contours_green, _ = cv.findContours(mask_green, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
         if not contours_green:
             print(f"  DEBUG: No green contours found in mask")
-            return False, False, None, None
+            return False, False
         
         # Check total green pixels instead of individual contour (handles fragmented masks)
         total_green_pixels = np.count_nonzero(mask_green)
@@ -261,7 +261,7 @@ def detect_green_tape_box(mask_green, mask_red, frame_height, frame_width, outpu
         # Threshold of 50 pixels allows for fragmented small green boxes
         if total_green_pixels < 50:
             print(f"  DEBUG: Total green pixels too small: {total_green_pixels} < 50")
-            return False, False, None, None
+            return False, False
         
         # Combine all green contours to get the full bounding box (handles cases where red tape pierces through)
         # Concatenate all contours into a single array
@@ -330,7 +330,7 @@ def detect_green_tape_box(mask_green, mask_red, frame_height, frame_width, outpu
         # Be more strict for single contours with poor ratios
         if len(contours_green) == 1 and angle > 45 and green_pixels_ratio < 0.4:
             print(f"  DEBUG: Single rotated contour with poor fit ({green_pixels_ratio:.1%}), rejecting detection")
-            return False, False, None, None
+            return False, False
         
         print(f"  DEBUG: Green box fit validated ({green_pixels_ratio:.1%})")
         contours_red, _ = cv.findContours(mask_red, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
@@ -413,7 +413,7 @@ def detect_green_tape_box(mask_green, mask_red, frame_height, frame_width, outpu
     except Exception as e:
 
         print(f"  Error detecting green tape box: {e}")
-        return False, False, None, None
+        return False, False
 
 
 
