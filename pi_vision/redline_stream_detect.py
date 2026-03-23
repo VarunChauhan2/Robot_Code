@@ -238,8 +238,9 @@ def detect_green_tape_box(mask_green, mask_red, frame_height, frame_width):
             use_largest_only = True
         elif corners_out_of_frame >= 2 and green_pixels_ratio < 0.7 and len(contours_green) > 1:
             use_largest_only = True
-        elif angle > 30 and 0.2 <= green_pixels_ratio < 0.6 and len(contours_green) > 1:
-            use_largest_only = True
+        # Removed: angle > 30 and ratio 0.2-0.6 condition
+        # This was causing false negatives when red tape pierces through fragmented green boxes
+        # Better to use combined approach and rely on interior margin to validate detection
         
         if use_largest_only:
             largest_green = max(contours_green, key=cv.contourArea)
