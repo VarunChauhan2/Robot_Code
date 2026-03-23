@@ -716,17 +716,21 @@ def run_stream(camera_index=0, curvature_threshold=0.003, display=False,
             
             print(f"[{timestamp}] Frame {frame_count} | {status_str}")
             
-            # Send offset over I2C (priority: bullseye > green box > centerline)
+            # Send offset over I2C (priority: bullseye > turn > green box (if under red) > centerline)
             if results['bullseye_detected'] and results.get('bullseye_distance_x') is not None:
                 send_i2c_data(None, False, 'straight', 
                             bullseye_distance_x=results['bullseye_distance_x'],
                             bullseye_distance_y=results['bullseye_distance_y'])
+            elif results['is_turn']:
+                # Turn detection takes priority over green box
+                send_i2c_data(results['centerline_distance'], results['is_turn'], results['turn_type'])
             elif results['green_detected'] and results.get('green_under_red', False):
+                # Only send green box data if red is under it
                 send_i2c_data(None, False, 'straight',
                             green_detected=results['green_detected'],
                             green_under_red=results.get('green_under_red', False))
             elif results['centerline_distance'] is not None:
-                send_i2c_data(results['centerline_distance'], results['is_turn'], results['turn_type'])
+                send_i2c_data(results['centerline_distance'], False, 'straight')
             else:
                 send_i2c_data(0, False, 'straight')
             
