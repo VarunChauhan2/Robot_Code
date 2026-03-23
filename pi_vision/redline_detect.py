@@ -742,7 +742,7 @@ def process_batch(input_dir=None, output_dir=None, curvature_threshold=0.003):
             camera_center_y = frame_height / 2
             
             bullseye_distance_x = bullseye_centroid[0] - camera_center_x
-            bullseye_distance_y = bullseye_centroid[1] - camera_center_y
+            bullseye_distance_y = camera_center_y - bullseye_centroid[1]  # Negative when below center
             
             print(f"  [BULLSEYE] DETECTED at position {bullseye_centroid} (radius: {bullseye_radius:.1f})")
             print(f"  [BULLSEYE] Distance from camera center - X: {bullseye_distance_x:.2f} px, Y: {bullseye_distance_y:.2f} px")
