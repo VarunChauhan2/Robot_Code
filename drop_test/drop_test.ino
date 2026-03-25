@@ -62,7 +62,7 @@ const float TURN_ANGLE_OFFSET_LEFT = -2.5;
 int dropPhase = 0;
 unsigned long dropPhaseTime = 0;
 int dropCommandCount = 0;
-const int DROP_MOTOR_DELAY_TIME = 1000;
+const int DROP_MOTOR_DELAY_TIME = 8000;
 const int dropThreshold = 5;
 bool dropSequenceCompleted = false;
 
@@ -219,6 +219,7 @@ void receiveEvent(int howMany) {
     int cmd = Wire.read();
 
     if (cmd == 5) {
+      Serial.println("[I2C] Drop command received");
       if (dropSequenceCompleted) {
         return;
       }
@@ -228,6 +229,9 @@ void receiveEvent(int howMany) {
       } else {
         dropCommandCount++;
       }
+
+      Serial.print("[I2C] Drop count: ");
+      Serial.println(dropCommandCount);
 
       if (dropCommandCount >= dropThreshold) {
         currentCommand = cmd;
@@ -359,7 +363,7 @@ void executeGripper(bool grab) {
   if (grab) {
     gripperServo.write(100);
     delay(500);
-    liftServo.write(120);
+    liftServo.write(60);
   } else {
     liftServo.write(30);
     delay(500);
