@@ -430,14 +430,10 @@ def send_i2c_data(centerline_distance, is_turn=False, turn_type='straight', bull
             
             data = [4, x_offset, y_offset]
             bus.write_i2c_block_data(I2C_ADDR, 0, data)
-        elif green_detected:
+        elif green_detected and green_under_red:
             # Mode 5: Green box detection
-            # offset: 1 (indicates green box presence)
-            # direction: 1 if under red, 0 if beside red
-            offset = 1
-            direction = 1 if green_under_red else 0
-            
-            data = [5, offset, direction]
+            # Only send when red passes UNDER the green box
+            data = [5]
             bus.write_i2c_block_data(I2C_ADDR, 0, data)
         else:
             # Determine mode based on turn type (centerline data)
