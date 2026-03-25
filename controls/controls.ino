@@ -51,7 +51,7 @@ int lastError = 0;
 
 int consecutiveTurnCount = 0;
 const int turnThreshold = 10;
-const int TURN_SETTLE_FROM_FOLLOW = 7500;  // 7.5s settling after line-follow
+const int TURN_SETTLE_FROM_FOLLOW = 6500;  // 7.5s settling after line-follow
 const float TURN_ANGLE_OFFSET_RIGHT = 2.5;  // Extra degrees for right turns (undershoot compensation)
 const float TURN_ANGLE_OFFSET_LEFT = -2.5;  // Reduce degrees for left turns (overshoot compensation)
 
@@ -588,8 +588,12 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
       speedMultiplier = 0.3 + (0.7 * (rotation_error - 1.5) / 6.5);
     }
     
-    int adjustedInnerSpeed = max(50, (int)(innerSpeed * speedMultiplier));
-    int adjustedOuterSpeed = max(50, (int)(outerSpeed * speedMultiplier));
+    // Preserve sign when applying minimum speed constraint
+    int tempInner = (int)(innerSpeed * speedMultiplier);
+    int adjustedInnerSpeed = (tempInner < 0) ? -max(50, abs(tempInner)) : max(50, tempInner);
+    
+    int tempOuter = (int)(outerSpeed * speedMultiplier);
+    int adjustedOuterSpeed = (tempOuter < 0) ? -max(50, abs(tempOuter)) : max(50, tempOuter);
 
     if (isLeft) {
       moveMotors(adjustedInnerSpeed, adjustedOuterSpeed);
