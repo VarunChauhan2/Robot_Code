@@ -51,8 +51,8 @@ int lastError = 0;
 
 int consecutiveTurnCount = 0;
 const int turnThreshold = 10;
-const int TURN_SETTLE_DEFAULT = 7700;  // Default settling time for all turns except turn 5 (ms)
-const int TURN_SETTLE_TURN5 = 5500;  // Reduced settling time for 5th forward turn (ms)
+const int TURN_SETTLE_DEFAULT = 5500;  // Default settling time for all turns except turn 5 (ms)
+const int TURN_SETTLE_TURN5 = 7700;  // Reduced settling time for 5th forward turn (ms)
 const float TURN_ANGLE_OFFSET_RIGHT = 2.5;  // Extra degrees for right turns (undershoot compensation)
 const float TURN_ANGLE_OFFSET_LEFT = -2.5;  // Reduce degrees for left turns (overshoot compensation)
 
@@ -209,7 +209,6 @@ void loop() {
       return;
     } else {
       // Recovery period complete
-      Serial.println(F("Forward turn recovery complete, resuming normal operation"));
       in_forward_turn_recovery = false;
       currentCommand = 0;
     }
@@ -223,7 +222,6 @@ void loop() {
       return;
     } else {
       // Backup complete
-      Serial.println(F("Pickup backup complete, ready for grab"));
       in_pickup_backup = false;
       currentCommand = 0;
     }
@@ -237,7 +235,6 @@ void loop() {
       return;
     } else {
       // Recovery period complete
-      Serial.println(F("Return turn skip recovery complete, resuming normal operation"));
       in_return_turn_skip_recovery = false;
       currentCommand = 0;
     }
@@ -256,7 +253,6 @@ void loop() {
       if (consecutiveTurnCount >= turnThreshold) {
         // Check if we should skip this turn (first back-to-back turn after 2nd turn in return)
         if (in_return_mode && skip_next_turn_in_return) {
-          Serial.println(F("SKIPPING turn (LEFT) in return (back-to-back obstacle)"));
           in_return_turn_skip_recovery = true;
           return_turn_skip_recovery_start = millis();
           skip_next_turn_in_return = false;  // Clear flag after skipping
@@ -264,7 +260,6 @@ void loop() {
           currentCommand = 0;
         } else {
           // Execute LEFT turn in all cases (forward mode or return mode)
-          Serial.println(F("CMD: TURN LEFT"));
           
           // Different parameters for 5th forward turn vs other turns
           if (!in_return_mode && forward_turns_executed == 4) {
@@ -281,23 +276,16 @@ void loop() {
           // Track turns in return mode
           if (in_return_mode) {
             return_turns_completed++;
-            Serial.print(F("Return turn #"));
-            Serial.println(return_turns_completed);
             
             // After 2nd turn in return mode, set flag to skip next turn
             if (return_turns_completed == 2) {
               skip_next_turn_in_return = true;
-              Serial.println(F("Will skip next turn"));
             }
           } else {
             forward_turns_executed++;
           }
         }
       } else {
-        Serial.print(F("TURN LEFT queued: "));
-        Serial.print(consecutiveTurnCount);
-        Serial.print("/");
-        Serial.println(turnThreshold);
       }
       break;
 
@@ -305,22 +293,16 @@ void loop() {
       if (consecutiveTurnCount >= turnThreshold) {
         // In return mode, ignore all RIGHT turns (only LEFT turns allowed)
         if (in_return_mode) {
-          Serial.println(F("IGNORING RIGHT turn in return mode (only LEFT turns allowed)"));
           consecutiveTurnCount = 0;
           currentCommand = 0;
         } else {
           // In forward mode, execute RIGHT turns normally
-          Serial.println(F("CMD: TURN RIGHT"));
           executeArc(200, 0.1, false);
           consecutiveTurnCount = 0;
           currentCommand = 0;
           forward_turns_executed++;
         }
       } else {
-        Serial.print(F("TURN RIGHT queued: "));
-        Serial.print(consecutiveTurnCount);
-        Serial.print("/");
-        Serial.println(turnThreshold);
       }
       break;
 
@@ -347,17 +329,12 @@ void receiveEvent(int howMany) {
   lastHeartbeat = millis();
   int flush;
 
-  Serial.print(F("I2C: "));
-  Serial.print(howMany);
-  Serial.println(F(" bytes"));
-
   // If in forward turn recovery mode, ignore all Pi commands
   if (in_forward_turn_recovery) {
     // Consume bytes but don't process
     while (Wire.available()) {
       Wire.read();
     }
-    Serial.println(F("CMD ignored (forward turn recovery)"));
     return;
   }
 
@@ -367,7 +344,6 @@ void receiveEvent(int howMany) {
     while (Wire.available()) {
       Wire.read();
     }
-    Serial.println(F("CMD ignored (pickup backup)"));
     return;
   }
 
@@ -377,7 +353,6 @@ void receiveEvent(int howMany) {
     while (Wire.available()) {
       Wire.read();
     }
-    Serial.println(F("CMD ignored (return turn skip recovery)"));
     return;
   }
 
@@ -385,9 +360,6 @@ void receiveEvent(int howMany) {
   if (howMany == 4) {
     flush = Wire.read();
     int cmd = Wire.read();
-    
-    Serial.print(F("4-byte cmd: "));
-    Serial.println(cmd);
 
     // If currently in grab sequence, only accept grab updates
     if (currentCommand == 4) {
@@ -404,13 +376,7 @@ void receiveEvent(int howMany) {
     // Handle follow command
     if (cmd == 1) {
       if (currentCommand != 1) {
-        Serial.println(F("CMD: FOLLOW LINE"));
         lastError = 0;
-      }
-      if (consecutiveTurnCount > 0) {
-        Serial.print(F("Turn buffer lost: "));
-        Serial.print(consecutiveTurnCount);
-        Serial.println(F(" counts cleared by FOLLOW"));
       }
       consecutiveTurnCount = 0;
       currentCommand = cmd;
@@ -441,8 +407,6 @@ void receiveEvent(int howMany) {
     }
     // Unknown 4-byte command
     else {
-      Serial.print(F("Unknown 4-byte cmd: "));
-      Serial.println(cmd);
       Wire.read();
       Wire.read();
       grabCommandCount = 0;
@@ -452,9 +416,6 @@ void receiveEvent(int howMany) {
   else if (howMany == 2) {
     flush = Wire.read();
     int cmd = Wire.read();
-    
-    Serial.print(F("2-byte cmd: "));
-    Serial.println(cmd);
 
     // Ignore all non-grab commands during grab sequence
     if (currentCommand == 4) {
@@ -485,15 +446,7 @@ void receiveEvent(int howMany) {
     else {
       if (cmd == 2 || cmd == 3) {
         consecutiveTurnCount++;
-        Serial.print(F("TURN CMD: ")); 
-        Serial.println(cmd == 2 ? F("LEFT") : F("RIGHT"));
       } else {
-        Serial.print(F("Unknown 2-byte cmd: "));
-        Serial.println(cmd);
-        if (consecutiveTurnCount > 0) {
-          Serial.print(F("Turn buffer cleared: "));
-          Serial.println(consecutiveTurnCount);
-        }
         consecutiveTurnCount = 0;
       }
 
@@ -503,8 +456,6 @@ void receiveEvent(int howMany) {
     }
   }
   else {
-    Serial.print(F("Unexpected byte count: "));
-    Serial.println(howMany);
   }
 }
 
@@ -547,9 +498,6 @@ void executeArc(int outerSpeed, float ratio, bool isLeft, int customSettleTime =
   float current_rotation = 0.0;  // Accumulated rotation since turn start
   unsigned long last_gyro_time = millis();
   
-  Serial.print(F("TURN START: "));
-  Serial.println(isLeft ? "LEFT" : "RIGHT");
-  
   // Settling phase: move forward straight (duration depends on previous command)
   unsigned long settleStartTime = millis();
   while (millis() - settleStartTime < settleTime) {
@@ -585,13 +533,6 @@ void executeArc(int outerSpeed, float ratio, bool isLeft, int customSettleTime =
     current_rotation += abs(rotation_this_frame);
     
     float rotation_error = target_rotation - current_rotation;
-    
-    Serial.print(F("Rotation: "));
-    Serial.print(current_rotation);
-    Serial.print(F(" | Target: "));
-    Serial.print(target_rotation);
-    Serial.print(F(" | Error: "));
-    Serial.println(rotation_error);
 
     // Check if we've rotated enough
     if (rotation_error < 1.5) {  // Tighter tolerance
@@ -624,14 +565,12 @@ void executeArc(int outerSpeed, float ratio, bool isLeft, int customSettleTime =
   
   // Check if we just completed the 2nd turn in forward mode and need recovery
   if (!in_return_mode && forward_turns_executed == 2) {
-    Serial.println(F("Entering forward turn recovery mode (10 seconds)"));
     in_forward_turn_recovery = true;
     forward_turn_recovery_start = millis();
   }
   
   // Check if we just completed the 5th turn in forward mode (LEFT turn entering pickup) and need backup
   if (!in_return_mode && forward_turns_executed == 5 && isLeft) {
-    Serial.println(F("Entering pickup backup mode (7 seconds)"));
     in_pickup_backup = true;
     pickup_backup_start = millis();
   }
@@ -650,9 +589,6 @@ void executeArc(int outerSpeed, float ratio, bool isLeft, int customSettleTime =
 void executeGrabSequence(int xOffset, int yOffset) {
   // Phase 0: Lateral centering + forward movement
   if (grabPhase == 0) {
-    if (grabCommandCount == grabThreshold) {
-      Serial.println(F("CMD: GRAB - Phase 0"));
-    }
     float currentError = xOffset;
     float derivative = currentError - lastGrabError;
     int xAdjustment = (currentError * grabKp) + (derivative * grabKd);
@@ -664,7 +600,6 @@ void executeGrabSequence(int xOffset, int yOffset) {
     moveMotors(leftMotor, rightMotor);
 
     if (abs(yOffset) <= 2) {
-      Serial.println(F("CMD: GRAB - Phase 1"));
       grabPhase = 1;
       grabPhaseTime = millis();
     }
@@ -674,20 +609,17 @@ void executeGrabSequence(int xOffset, int yOffset) {
     moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);
 
     if (millis() - grabPhaseTime >= GRAB_FINAL_PUSH_TIME) {
-      Serial.println(F("CMD: GRAB - Phase 2"));
       grabPhase = 2;
       stopMotors();
     }
   }
   // Phase 2: Execute gripper
   else if (grabPhase == 2) {
-    Serial.println(F("CMD: GRAB - Phase 3 (Spin)"));
     executeGripper(true);
     grabPhase = 3;
   }
   // Phase 3: Backup sequence
   else if (grabPhase == 3) {
-    Serial.println(F("CMD: GRAB - Phase 3 (Backup)"));
     moveMotors(-GRAB_BASE_SPEED, -GRAB_BASE_SPEED);  // Move backward
     grabPhaseTime = millis();
     grabPhase = 4;
@@ -696,7 +628,6 @@ void executeGrabSequence(int xOffset, int yOffset) {
   // Phase 4: Wait for backup duration (7 seconds)
   else if (grabPhase == 4) {
     if (millis() - grabPhaseTime >= 7000) {  // 7 second backup
-      Serial.println(F("CMD: GRAB - Phase 5 (Rotate 90° Left)"));
       grabPhase = 5;
       grabPhaseTime = millis();
     }
@@ -724,7 +655,6 @@ void executeGrabSequence(int xOffset, int yOffset) {
     moveMotors(-100, 100);  // Rotate left: left motor backward, right motor forward
 
     if (abs(heading_change) < 2.0) {  // Within 2 degrees of 90 degrees
-      Serial.println(F("CMD: GRAB - Complete"));
       stopMotors();
       phase5_initialized = false;  // Reset for next grab
       currentCommand = 0;
@@ -734,7 +664,6 @@ void executeGrabSequence(int xOffset, int yOffset) {
       in_return_mode = true;
       return_turns_completed = 0;  // Reset turn counter for return path
       skip_next_turn_in_return = false;  // Flag not set yet
-      Serial.println(F("Return mode activated"));
     }
   }
 }
@@ -747,9 +676,6 @@ void executeGrabSequence(int xOffset, int yOffset) {
 void executeDropSequence() {
   // Phase 0: Initialize motor delay
   if (dropPhase == 0) {
-    if (dropCommandCount == dropThreshold) {
-      Serial.println(F("CMD: DROP - Phase 0"));
-    }
     moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);
     dropPhaseTime = millis();
     dropPhase = 1;
@@ -757,7 +683,6 @@ void executeDropSequence() {
   // Phase 1: Wait for motor delay to complete
   else if (dropPhase == 1) {
     if (millis() - dropPhaseTime >= DROP_MOTOR_DELAY_TIME) {
-      Serial.println(F("CMD: DROP - Phase 1"));
       stopMotors();
       dropPhase = 2;
     } else {
@@ -766,7 +691,6 @@ void executeDropSequence() {
   }
   // Phase 2: Execute gripper drop
   else if (dropPhase == 2) {
-    Serial.println(F("CMD: DROP - Complete"));
     executeGripper(false);
     currentCommand = 0;
     dropSequenceCompleted = true;
@@ -784,13 +708,11 @@ void executeGripper(bool grab) {
     gripperServo.write(100);  // Close gripper
     delay(500);
     liftServo.write(120);  // Raise lift
-    Serial.println("[GRABBED] Gripper closed and lift raised");
   } else {
     // Drop: lower lift and open gripper
     liftServo.write(30);   // Lower lift
     delay(500);
     gripperServo.write(10);   // Open gripper
-    Serial.println("[DROPPED] Lift lowered and gripper opened");
   }
 }
 
