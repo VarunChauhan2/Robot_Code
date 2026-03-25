@@ -432,11 +432,7 @@ void receiveEvent(int howMany) {
         return;
       }
 
-      if (currentCommand != 5) {
-        dropCommandCount = 1;
-      } else {
-        dropCommandCount++;
-      }
+      dropCommandCount++;
 
       if (dropCommandCount >= dropThreshold) {
         currentCommand = cmd;
@@ -674,26 +670,33 @@ void executeGrabSequence(int xOffset, int yOffset) {
 // ============================================================================
 
 void executeDropSequence() {
-  // Phase 0: Initialize motor delay
   if (dropPhase == 0) {
-    moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);
+    Serial.println("[DROP] Drop sequence started - Phase 0 (Motor forward)");
+    moveMotors(160, 160);
     dropPhaseTime = millis();
     dropPhase = 1;
   }
-  // Phase 1: Wait for motor delay to complete
   else if (dropPhase == 1) {
     if (millis() - dropPhaseTime >= DROP_MOTOR_DELAY_TIME) {
+      Serial.println("[DROP] Phase 1 complete - entering Phase 2 (Gripper drop)");
       stopMotors();
       dropPhase = 2;
     } else {
-      moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);
+      moveMotors(160, 160);
     }
   }
-  // Phase 2: Execute gripper drop
   else if (dropPhase == 2) {
+    Serial.println("[DROP] Phase 2 - executing gripper drop");
     executeGripper(false);
+    Serial.println("[DROP] Drop sequence complete!");
+    
+    stopMotors();
+    delay(1000);
+    
     currentCommand = 0;
     dropSequenceCompleted = true;
+    dropPhase = 0;
+    dropCommandCount = 0;
   }
 }
 
@@ -707,7 +710,7 @@ void executeGripper(bool grab) {
     // Grab: close gripper and raise lift
     gripperServo.write(100);  // Close gripper
     delay(500);
-    liftServo.write(120);  // Raise lift
+    liftServo.write(60);  // Raise lift
   } else {
     // Drop: lower lift and open gripper
     liftServo.write(30);   // Lower lift

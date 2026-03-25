@@ -62,7 +62,7 @@ const float TURN_ANGLE_OFFSET_LEFT = -2.5;
 int dropPhase = 0;
 unsigned long dropPhaseTime = 0;
 int dropCommandCount = 0;
-const int DROP_MOTOR_DELAY_TIME = 8000;
+const int DROP_MOTOR_DELAY_TIME = 5000;
 const int dropThreshold = 5;
 bool dropSequenceCompleted = false;
 
@@ -130,7 +130,6 @@ void setup() {
   Serial.println("LSM6DS and LIS3MDL Found!");
   lsm6ds.setGyroRange(LSM6DS_GYRO_RANGE_500_DPS);
   
-  calibrateMagnetometer();
   calibrateGyro();
   
   last_heading_time = millis();
@@ -328,7 +327,7 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
 void executeDropSequence() {
   if (dropPhase == 0) {
     Serial.println("[DROP] Drop sequence started - Phase 0 (Motor forward)");
-    moveMotors(80, 80);
+    moveMotors(160, 160);
     dropPhaseTime = millis();
     dropPhase = 1;
   }
@@ -338,13 +337,17 @@ void executeDropSequence() {
       stopMotors();
       dropPhase = 2;
     } else {
-      moveMotors(80, 80);
+      moveMotors(160, 160);
     }
   }
   else if (dropPhase == 2) {
     Serial.println("[DROP] Phase 2 - executing gripper drop");
     executeGripper(false);
     Serial.println("[DROP] Drop sequence complete!");
+    
+    stopMotors();
+    delay(1000);
+    
     currentCommand = 0;
     dropSequenceCompleted = true;
     dropPhase = 0;
