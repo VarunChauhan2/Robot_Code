@@ -124,6 +124,12 @@ unsigned long last_heading_time = 0;
 const float heading_alpha = 0.60; // Complementary filter weight (0.60 = 60% gyro, 40% mag) - strong mag correction to catch drift
 
 // ============================================================================
+// FUNCTION DECLARATIONS (Forward Declarations)
+// ============================================================================
+
+void executeArc(int outerSpeed, float ratio, bool isLeft, int customSettleTime = 0);
+
+// ============================================================================
 // SETUP
 // ============================================================================
 
