@@ -1,6 +1,5 @@
 #include <Wire.h>
 #include <Adafruit_LSM6DSOX.h>
-#include <Adafruit_LIS3MDL.h>
 #include <Adafruit_Sensor.h>
 #include <Servo.h>
 
@@ -24,7 +23,6 @@ Servo liftServo;     // Pin 11
 
 // IMU
 Adafruit_LSM6DSOX lsm6ds;
-Adafruit_LIS3MDL lis3mdl;
 
 // ============================================================================
 // I2C & COMMUNICATION
@@ -56,7 +54,7 @@ const int TURN_SETTLE_TURN5 = 7700;  // Reduced settling time for 5th forward tu
 const float TURN_ANGLE_OFFSET_RIGHT = 2.5;  // Extra degrees for right turns (undershoot compensation)
 const float TURN_ANGLE_OFFSET_LEFT = -2.5;  // Reduce degrees for left turns (overshoot compensation)
 
-int forward_turns_executed = 0;  // Track number of turns in forward direction
+int forward_turns_executed = 1;  // Track number of turns in forward direction
 bool in_forward_turn_recovery = false;  // Flag for recovery period after 2nd turn (forward)
 unsigned long forward_turn_recovery_start = 0;  // Timestamp of forward recovery start
 const int FORWARD_TURN_RECOVERY_TIME = 10000;  // 10 seconds: ignore Pi, move forward (after 2nd forward turn)
@@ -82,13 +80,12 @@ volatile int grabXOffset = 0;
 volatile int grabYOffset = 0;
 int grabPhase = 0;
 unsigned long grabPhaseTime = 0;
-int grabCommandCount = 0;
 int lastGrabError = 0;
 
 const int GRAB_BASE_SPEED = 80;
 const int GRAB_FINAL_PUSH_TIME = 2000;
 const int GRAB_X_THRESHOLD = 3;
-const int grabThreshold = 5;
+const int GRAB_CONFIRM_THRESHOLD = 5;  // Number of consistent grab commands before executing
 float grabKp = 0.5;
 float grabKd = 0;
 
@@ -98,30 +95,15 @@ bool grabSequenceCompleted = false;
 // DROP SEQUENCE
 // ============================================================================
 
-int dropPhase = 0;
-unsigned long dropPhaseTime = 0;
-int dropCommandCount = 0;
-
 const int DROP_MOTOR_DELAY_TIME = 1000;
-const int dropThreshold = 5;
 
 bool dropSequenceCompleted = false;
 
 // ============================================================================
-// MAGNETOMETER CALIBRATION & FUSION
+// GYRO CALIBRATION
 // ============================================================================
 
-// Magnetometer calibration offsets and scales
-float mag_offset_x = 0, mag_offset_y = 0, mag_offset_z = 0;
-float mag_scale_x = 1, mag_scale_y = 1, mag_scale_z = 1;
-
-// Gyro bias calibration
 float gyro_bias_x = 0, gyro_bias_y = 0, gyro_bias_z = 0;
-
-// Heading fusion
-float current_heading = 0;      // Fused heading in degrees (0-360)
-unsigned long last_heading_time = 0;
-const float heading_alpha = 0.60; // Complementary filter weight (0.60 = 60% gyro, 40% mag) - strong mag correction to catch drift
 
 // ============================================================================
 // FUNCTION DECLARATIONS (Forward Declarations)
@@ -161,30 +143,19 @@ void setup() {
   Wire.onRequest(requestEvent);
 
   // Initialize IMU
-  bool lsm6ds_success, lis3mdl_success;
+  bool lsm6ds_success;
   lsm6ds_success = lsm6ds.begin_I2C();
-  lis3mdl_success = lis3mdl.begin_I2C();
   
   if (!lsm6ds_success) {
     Serial.println("Failed to find LSM6DS chip");
-  }
-  if (!lis3mdl_success) {
-    Serial.println("Failed to find LIS3MDL chip");
-  }
-  if (!(lsm6ds_success && lis3mdl_success)) {
     while (1) delay(10);
   }
   
-  Serial.println("LSM6DS and LIS3MDL Found!");
+  Serial.println("LSM6DS Found!");
   lsm6ds.setGyroRange(LSM6DS_GYRO_RANGE_500_DPS);
-  
-  // Calibrate magnetometer
-  calibrateMagnetometer();
   
   // Calibrate gyro
   calibrateGyro();
-  
-  last_heading_time = millis();
 
   lastHeartbeat = millis();
   Serial.println("System Ready.");
@@ -360,56 +331,43 @@ void receiveEvent(int howMany) {
   if (howMany == 4) {
     flush = Wire.read();
     int cmd = Wire.read();
-
-    // If currently in grab sequence, only accept grab updates
-    if (currentCommand == 4) {
-      if (cmd == 4) {
-        grabXOffset = (signed char)Wire.read();
-        grabYOffset = (signed char)Wire.read();
-      } else {
-        Wire.read();
-        Wire.read();
-      }
-      return;
-    }
+    int byte3 = (signed char)Wire.read();
+    int byte4 = (signed char)Wire.read();
 
     // Handle follow command
     if (cmd == 1) {
+      // Ignore follow commands during Phase 0 (non-blocking PD feedback phase)
+      if (grabPhase == 0 && !grabSequenceCompleted) {
+        // Phase 0 is running - we're in continuous PD mode
+        return;
+      }
+      
       if (currentCommand != 1) {
         lastError = 0;
       }
       consecutiveTurnCount = 0;
       currentCommand = cmd;
-      i2cOffset = Wire.read();
-      i2cDirection = Wire.read();
-      grabCommandCount = 0;
+      i2cOffset = byte3;
+      i2cDirection = byte4;
     }
-    // Handle grab command
+    // Handle grab command - accumulate confirmations
     else if (cmd == 4) {
       if (grabSequenceCompleted) {
-        Wire.read();
-        Wire.read();
+        // Grab already completed, ignore further grab commands
         return;
       }
 
-      if (currentCommand != 4) {
-        grabCommandCount = 1;
-      } else {
-        grabCommandCount++;
-      }
+      grabXOffset = byte3;
+      grabYOffset = byte4;
+      
+      // Accumulate grab command confirmations
+      static int grabCommandCount = 0;
+      grabCommandCount++;
 
-      grabXOffset = (signed char)Wire.read();
-      grabYOffset = (signed char)Wire.read();
-
-      if (grabCommandCount >= grabThreshold) {
+      if (grabCommandCount >= GRAB_CONFIRM_THRESHOLD) {
         currentCommand = cmd;
+        grabCommandCount = 0;  // Reset counter for potential future grabs (if ever allowed)
       }
-    }
-    // Unknown 4-byte command
-    else {
-      Wire.read();
-      Wire.read();
-      grabCommandCount = 0;
     }
   }
   // ---- 2-byte commands: Turns, Drop ----
@@ -417,41 +375,43 @@ void receiveEvent(int howMany) {
     flush = Wire.read();
     int cmd = Wire.read();
 
-    // Ignore all non-grab commands during grab sequence
-    if (currentCommand == 4) {
-      return;
-    }
-
-    // Handle drop command
+    // Handle drop command - accumulate confirmations
     if (cmd == 5) {
       if (!grabSequenceCompleted) {
+        // Can't drop until grab is complete
         return;
       }
 
       if (dropSequenceCompleted) {
+        // Drop already completed, ignore further drop commands
         return;
       }
 
+      // Accumulate drop command confirmations
+      static int dropCommandCount = 0;
       dropCommandCount++;
 
-      if (dropCommandCount >= dropThreshold) {
+      if (dropCommandCount >= 5) {  // Threshold for drop
         currentCommand = cmd;
+        dropCommandCount = 0;  // Reset counter
       }
     }
     // Handle other commands (turns)
     else {
+      // Ignore turn commands during Phase 0 (non-blocking PD feedback phase)
+      if (grabPhase == 0 && !grabSequenceCompleted) {
+        // Phase 0 is running - don't accept turns
+        return;
+      }
+      
       if (cmd == 2 || cmd == 3) {
         consecutiveTurnCount++;
       } else {
         consecutiveTurnCount = 0;
       }
 
-      grabCommandCount = 0;
-      dropCommandCount = 0;
       currentCommand = cmd;
     }
-  }
-  else {
   }
 }
 
@@ -480,11 +440,8 @@ void runPDLogic(int offset, int dir) {
 // ============================================================================
 
 void executeArc(int outerSpeed, float ratio, bool isLeft, int customSettleTime = 0) {
-  // Clear any leftover grab/drop state before turn
-  grabPhase = 0;
-  dropPhase = 0;
-  grabSequenceCompleted = false;
-  dropSequenceCompleted = false;
+  // No need to clear grab/drop state - these sequences are now fully blocking
+  // and will not be interrupted by turns
   
   int settleTime = (customSettleTime > 0) ? customSettleTime : TURN_SETTLE_DEFAULT;
   
@@ -497,10 +454,6 @@ void executeArc(int outerSpeed, float ratio, bool isLeft, int customSettleTime =
   // Settling phase: move forward straight (duration depends on previous command)
   unsigned long settleStartTime = millis();
   while (millis() - settleStartTime < settleTime) {
-    sensors_event_t accel, gyro, mag, temp;
-    lsm6ds.getEvent(&accel, &gyro, &temp);
-    
-    // Move forward straight
     moveMotorsStraight(150, false);
   }
   stopMotors();
@@ -571,9 +524,7 @@ void executeArc(int outerSpeed, float ratio, bool isLeft, int customSettleTime =
     pickup_backup_start = millis();
   }
   
-  // Reset state after turn complete
-  grabPhase = 0;
-  dropPhase = 0;
+  // Return to main loop
   currentCommand = 0;
 }
 
@@ -583,8 +534,15 @@ void executeArc(int outerSpeed, float ratio, bool isLeft, int customSettleTime =
 // ============================================================================
 
 void executeGrabSequence(int xOffset, int yOffset) {
-  // Phase 0: Lateral centering + forward movement
+  // ========================================================================
+  // PHASE 0: Non-blocking state machine (continuous PD feedback from Pi)
+  // ========================================================================
   if (grabPhase == 0) {
+    // Initialize phase 0 timer on first entry
+    if (grabPhaseTime == 0) {
+      grabPhaseTime = millis();
+    }
+
     float currentError = xOffset;
     float derivative = currentError - lastGrabError;
     int xAdjustment = (currentError * grabKp) + (derivative * grabKd);
@@ -595,72 +553,103 @@ void executeGrabSequence(int xOffset, int yOffset) {
 
     moveMotors(leftMotor, rightMotor);
 
-    if (abs(yOffset) <= 2) {
+    // Transition to Phase 1 when centered or timeout reached
+    unsigned long phase0_elapsed = millis() - grabPhaseTime;
+    if (abs(yOffset) <= 2 || phase0_elapsed > 5000) {  // 5 second timeout
+      if (phase0_elapsed > 5000) {
+        Serial.println("[GRAB] Phase 0 timeout - proceeding to Phase 1");
+      }
       grabPhase = 1;
-      grabPhaseTime = millis();
+      grabPhaseTime = 0;  // Reset for next phase
+      return;  // Return to main loop, blocking phases start next iteration
     }
+    return;  // Phase 0 non-blocking: always return to main loop
   }
-  // Phase 1: Final push (2 seconds straight)
-  else if (grabPhase == 1) {
-    moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);
 
-    if (millis() - grabPhaseTime >= GRAB_FINAL_PUSH_TIME) {
-      grabPhase = 2;
-      stopMotors();
+  // ========================================================================
+  // PHASES 1-5: Blocking sequential execution (atomic, no interruption)
+  // ========================================================================
+
+  // Phase 1: Final push forward (2 seconds straight)
+  if (grabPhase == 1) {
+    unsigned long phase1_start = millis();
+    while (millis() - phase1_start < GRAB_FINAL_PUSH_TIME) {
+      moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);
     }
+    stopMotors();
+    grabPhase = 2;
   }
-  // Phase 2: Execute gripper
-  else if (grabPhase == 2) {
+
+  // Phase 2: Execute gripper (close gripper and raise lift)
+  if (grabPhase == 2) {
     executeGripper(true);
     grabPhase = 3;
   }
-  // Phase 3: Backup sequence
-  else if (grabPhase == 3) {
+
+  // Phase 3: Backup sequence (7 seconds)
+  if (grabPhase == 3) {
     moveMotors(-GRAB_BASE_SPEED, -GRAB_BASE_SPEED);  // Move backward
-    grabPhaseTime = millis();
+    unsigned long phase3_start = millis();
+    while (millis() - phase3_start < 7000) {
+      // Keep backing up
+    }
+    stopMotors();
     grabPhase = 4;
   }
-  
-  // Phase 4: Wait for backup duration (7 seconds)
-  else if (grabPhase == 4) {
-    if (millis() - grabPhaseTime >= 7000) {  // 7 second backup
-      grabPhase = 5;
-      grabPhaseTime = millis();
+
+  // Phase 4: Rotate 90 degrees left (in-place rotation using gyro)
+  if (grabPhase == 4) {
+    float phase4_rotation = 0.0;
+    unsigned long phase4_gyro_time = millis();
+
+    while (true) {
+      sensors_event_t accel, gyro, mag, temp;
+      lsm6ds.getEvent(&accel, &gyro, &temp);
+
+      // Measure rotation using gyro
+      unsigned long now = millis();
+      float dt = (now - phase4_gyro_time) / 1000.0;
+      phase4_gyro_time = now;
+
+      // Integrate gyro Z to get rotation
+      float rotation_this_frame = (gyro.gyro.z - gyro_bias_z) * 57.2958 * dt;
+      phase4_rotation += abs(rotation_this_frame);
+
+      float rotation_error = 90.0 - phase4_rotation;
+
+      // Check if we've rotated 90 degrees
+      if (rotation_error < 1.5) {
+        break;
+      }
+
+      // Speed damping as we approach target rotation
+      float speedMultiplier = 1.0;
+      if (rotation_error < 8.0) {
+        speedMultiplier = 0.3 + (0.7 * (rotation_error - 1.5) / 6.5);
+      }
+
+      int rotationSpeed = (int)(100 * speedMultiplier);
+      rotationSpeed = max(50, rotationSpeed);
+
+      moveMotors(-rotationSpeed, rotationSpeed);
     }
+
+    stopMotors();
+    grabPhase = 5;
   }
-  
-  // Phase 5: Rotate 90 degrees left (in-place rotation)
-  else if (grabPhase == 5) {
-    sensors_event_t accel, gyro, mag, temp;
-    lsm6ds.getEvent(&accel, &gyro, &temp);
-    
-    // Update fused heading
-    getFusedHeading(gyro.gyro.z);
-    
-    // Calculate heading change since start of phase 5
-    static float phase5_start_heading = 0;
-    static bool phase5_initialized = false;
-    
-    if (!phase5_initialized) {
-      phase5_start_heading = current_heading;
-      phase5_initialized = true;
-    }
-    
-    float heading_change = getHeadingChange(phase5_start_heading + 90);
 
-    moveMotors(-100, 100);  // Rotate left: left motor backward, right motor forward
+  // Phase 5: Cleanup and activate return mode
+  if (grabPhase == 5) {
+    grabSequenceCompleted = true;
+    currentCommand = 0;
+    grabPhase = 0;
+    grabPhaseTime = 0;
+    lastGrabError = 0;
 
-    if (abs(heading_change) < 2.0) {  // Within 2 degrees of 90 degrees
-      stopMotors();
-      phase5_initialized = false;  // Reset for next grab
-      currentCommand = 0;
-      grabSequenceCompleted = true;
-      
-      // Activate return mode: robot will now return to start with back-to-back turn handling
-      in_return_mode = true;
-      return_turns_completed = 0;  // Reset turn counter for return path
-      skip_next_turn_in_return = false;  // Flag not set yet
-    }
+    // Activate return mode: robot will now return to start
+    in_return_mode = true;
+    return_turns_completed = 0;
+    skip_next_turn_in_return = false;
   }
 }
 
@@ -670,34 +659,21 @@ void executeGrabSequence(int xOffset, int yOffset) {
 // ============================================================================
 
 void executeDropSequence() {
-  if (dropPhase == 0) {
-    Serial.println("[DROP] Drop sequence started - Phase 0 (Motor forward)");
-    moveMotors(160, 160);
-    dropPhaseTime = millis();
-    dropPhase = 1;
+  moveMotors(160, 160);
+  
+  // Phase 1: Move forward for DROP_MOTOR_DELAY_TIME
+  unsigned long dropStartTime = millis();
+  while (millis() - dropStartTime < DROP_MOTOR_DELAY_TIME) {
+    // Keep moving forward
   }
-  else if (dropPhase == 1) {
-    if (millis() - dropPhaseTime >= DROP_MOTOR_DELAY_TIME) {
-      Serial.println("[DROP] Phase 1 complete - entering Phase 2 (Gripper drop)");
-      stopMotors();
-      dropPhase = 2;
-    } else {
-      moveMotors(160, 160);
-    }
-  }
-  else if (dropPhase == 2) {
-    Serial.println("[DROP] Phase 2 - executing gripper drop");
-    executeGripper(false);
-    Serial.println("[DROP] Drop sequence complete!");
-    
-    stopMotors();
-    delay(1000);
-    
-    currentCommand = 0;
-    dropSequenceCompleted = true;
-    dropPhase = 0;
-    dropCommandCount = 0;
-  }
+  
+  stopMotors();
+  
+  // Phase 2: Execute gripper drop (lower lift and open gripper)
+  executeGripper(false);
+  
+  dropSequenceCompleted = true;
+  currentCommand = 0;
 }
 
 
@@ -765,26 +741,6 @@ void stopMotors() {
 }
 
 // ============================================================================
-// MAGNETOMETER CALIBRATION (HARDCODED VALUES)
-// ============================================================================
-
-void calibrateMagnetometer() {
-  // Hardcoded calibration values - obtained from initial calibration routine
-  // To recalibrate: Use the calibration sketch, rotate robot in all directions,
-  // and copy the printed offsets and scales here.
-  
-  mag_offset_x = -6.452794;
-  mag_offset_y = -48.063430;
-  mag_offset_z = -95.184158;
-
-  mag_scale_x = 0.730745;
-  mag_scale_y = 0.794111;
-  mag_scale_z = 2.686275;
-  
-  // Calibration values loaded successfully
-}
-
-// ============================================================================
 // GYRO CALIBRATION
 // ============================================================================
 
@@ -825,57 +781,8 @@ void calibrateGyro() {
 }
 
 // ============================================================================
-// HEADING FUSION (Gyro + Magnetometer)
+// MOTOR CORRECTION
 // ============================================================================
-
-float getFusedHeading(float gyro_z) {
-  unsigned long now = millis();
-  float dt = (now - last_heading_time) / 1000.0;
-  last_heading_time = now;
-  
-  // Update heading from gyro (degrees per second to degrees)
-  float gyro_heading = current_heading + (gyro_z * 57.2958) * dt;
-  
-  // Get magnetometer heading
-  sensors_event_t mag;
-  lis3mdl.getEvent(&mag);
-  
-  // Apply calibration to magnetometer data
-  float mag_x = (mag.magnetic.x - mag_offset_x) * mag_scale_x;
-  float mag_y = (mag.magnetic.y - mag_offset_y) * mag_scale_y;
-  
-  // Calculate heading from magnetometer (in degrees, 0-360)
-  float mag_heading = atan2(mag_y, mag_x) * 57.2958; // Convert radians to degrees
-  if (mag_heading < 0) mag_heading += 360;
-  
-  // Handle wrap-around when crossing 0 degrees
-  float heading_diff = mag_heading - gyro_heading;
-  if (heading_diff > 180) heading_diff -= 360;
-  if (heading_diff < -180) heading_diff += 360;
-  
-  // Complementary filter: combine gyro (fast, drifts) with mag (accurate, noisy)
-  current_heading = gyro_heading + (heading_diff * (1.0 - heading_alpha));
-  
-  // Normalize to 0-360 range
-  if (current_heading < 0) current_heading += 360;
-  if (current_heading >= 360) current_heading -= 360;
-  
-  return current_heading;
-}
-
-// ============================================================================
-// HEADING CHANGE CALCULATOR
-// ============================================================================
-
-float getHeadingChange(float target_angle) {
-  float diff = target_angle - current_heading;
-  
-  // Normalize to -180 to 180 range
-  if (diff > 180) diff -= 360;
-  if (diff < -180) diff += 360;
-  
-  return diff;
-}
 
 void moveMotorsStraight(int speed, bool backward) {
   // Move with gyro-guided correction to keep perfectly straight
