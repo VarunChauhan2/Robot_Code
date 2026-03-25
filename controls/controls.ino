@@ -51,7 +51,8 @@ int lastError = 0;
 
 int consecutiveTurnCount = 0;
 const int turnThreshold = 10;
-const int TURN_SETTLE_FROM_FOLLOW = 6500;  // 7.5s settling after line-follow
+const int TURN_SETTLE_DEFAULT = 7700;  // Default settling time for all turns except turn 5 (ms)
+const int TURN_SETTLE_TURN5 = 5500;  // Reduced settling time for 5th forward turn (ms)
 const float TURN_ANGLE_OFFSET_RIGHT = 2.5;  // Extra degrees for right turns (undershoot compensation)
 const float TURN_ANGLE_OFFSET_LEFT = -2.5;  // Reduce degrees for left turns (overshoot compensation)
 
@@ -63,7 +64,7 @@ const int FORWARD_TURN_RECOVERY_TIME = 10000;  // 10 seconds: ignore Pi, move fo
 // PICKUP BACKUP (after 5th forward turn to let vision see pickup location)
 bool in_pickup_backup = false;  // Flag for backup at pickup area (5th turn)
 unsigned long pickup_backup_start = 0;  // Timestamp when pickup backup started
-const int PICKUP_BACKUP_TIME = 7000;  // 7 seconds backup to reveal pickup location
+const int PICKUP_BACKUP_TIME = 2000;  // 2 seconds backup to reveal pickup location
 
 // RETURN MODE (after grab)
 bool in_return_mode = false;  // After grab, robot is returning
@@ -258,7 +259,16 @@ void loop() {
         } else {
           // Execute LEFT turn in all cases (forward mode or return mode)
           Serial.println(F("CMD: TURN LEFT"));
-          executeArc(200, -0.1, true);
+          
+          // Different parameters for 5th forward turn vs other turns
+          if (!in_return_mode && forward_turns_executed == 4) {
+            // 5th forward turn: reduced settling time and different ratio
+            executeArc(200, -0.5, true, TURN_SETTLE_TURN5);
+          } else {
+            // All other turns: default parameters (uses default settling time)
+            executeArc(200, 0.1, true);
+          }
+          
           consecutiveTurnCount = 0;
           currentCommand = 0;
           
@@ -295,7 +305,7 @@ void loop() {
         } else {
           // In forward mode, execute RIGHT turns normally
           Serial.println(F("CMD: TURN RIGHT"));
-          executeArc(200, -0.1, false);
+          executeArc(200, 0.1, false);
           consecutiveTurnCount = 0;
           currentCommand = 0;
           forward_turns_executed++;
@@ -516,14 +526,14 @@ void runPDLogic(int offset, int dir) {
 // TURN EXECUTION
 // ============================================================================
 
-void executeArc(int outerSpeed, float ratio, bool isLeft) {
+void executeArc(int outerSpeed, float ratio, bool isLeft, int customSettleTime = 0) {
   // Clear any leftover grab/drop state before turn
   grabPhase = 0;
   dropPhase = 0;
   grabSequenceCompleted = false;
   dropSequenceCompleted = false;
   
-  int settleTime = TURN_SETTLE_FROM_FOLLOW;
+  int settleTime = (customSettleTime > 0) ? customSettleTime : TURN_SETTLE_DEFAULT;
   
   int innerSpeed = outerSpeed * ratio;
   float angleOffset = isLeft ? TURN_ANGLE_OFFSET_LEFT : TURN_ANGLE_OFFSET_RIGHT;
