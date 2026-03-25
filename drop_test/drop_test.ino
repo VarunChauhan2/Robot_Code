@@ -224,11 +224,7 @@ void receiveEvent(int howMany) {
         return;
       }
 
-      if (currentCommand != 5) {
-        dropCommandCount = 1;
-      } else {
-        dropCommandCount++;
-      }
+      dropCommandCount++;
 
       Serial.print("[I2C] Drop count: ");
       Serial.println(dropCommandCount);
@@ -410,20 +406,6 @@ void stopMotors() {
   digitalWrite(ain2, HIGH);
   digitalWrite(bin1, HIGH);
   digitalWrite(bin2, HIGH);
-}
-
-// ============================================================================
-// MAGNETOMETER CALIBRATION
-// ============================================================================
-
-void calibrateMagnetometer() {
-  mag_offset_x = -6.452794;
-  mag_offset_y = -48.063430;
-  mag_offset_z = -95.184158;
-
-  mag_scale_x = 0.730745;
-  mag_scale_y = 0.794111;
-  mag_scale_z = 2.686275;
 }
 
 // ============================================================================
