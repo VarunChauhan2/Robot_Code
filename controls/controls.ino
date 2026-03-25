@@ -71,6 +71,7 @@ bool skip_next_turn_in_return = false;  // Skip the next fully executed turn in 
 bool in_return_turn_skip_recovery = false;  // Skip turn recovery mode (ignore turn, move forward)
 unsigned long return_turn_skip_recovery_start = 0;  // Timestamp when skip recovery started
 const int RETURN_TURN_SKIP_RECOVERY_TIME = 10000;  // 10 seconds to traverse past back-to-back turns (return)
+bool in_return_continue_forward_until_turn = false;  // Continue moving forward after skip recovery timeout, listen for left turn to exit
 
 // ============================================================================
 // GRAB SEQUENCE
@@ -205,10 +206,22 @@ void loop() {
       moveMotors(baseSpeed, baseSpeed);
       return;
     } else {
-      // Recovery period complete
+      // 10 second timeout reached: transition to continue-forward mode
+      // Robot will keep moving forward, but now listens for left turn commands
       in_return_turn_skip_recovery = false;
+      in_return_continue_forward_until_turn = true;
       currentCommand = 0;
     }
+  }
+
+  // Check if continuing forward until a left turn command arrives (after skip recovery timeout)
+  if (in_return_continue_forward_until_turn) {
+    moveMotors(baseSpeed, baseSpeed);
+    // If currentCommand is set to 2 (left turn) by receiveEvent, fall through to process it
+    if (currentCommand != 2) {
+      return;  // Keep moving forward
+    }
+    // Otherwise fall through to execute the left turn
   }
 
   switch (currentCommand) {
@@ -233,7 +246,7 @@ void loop() {
           // Execute LEFT turn in all cases (forward mode or return mode)
           
           // Different parameters for 5th forward turn vs other turns
-          if (!in_return_mode && forward_turns_executed == 4) {
+          if (!in_return_mode && forward_turns_executed == 5) {
             // 5th forward turn: reduced settling time and different ratio
             executeArc(200, -0.5, true, TURN_SETTLE_TURN5);
           } else {
@@ -243,6 +256,11 @@ void loop() {
           
           consecutiveTurnCount = 0;
           currentCommand = 0;
+          
+          // Clear continue-forward mode if we were in it
+          if (in_return_continue_forward_until_turn) {
+            in_return_continue_forward_until_turn = false;
+          }
           
           // Track turns in return mode
           if (in_return_mode) {
@@ -327,6 +345,29 @@ void receiveEvent(int howMany) {
     return;
   }
 
+  // If waiting for turn to exit continue-forward mode, only accept left turn commands
+  if (in_return_continue_forward_until_turn) {
+    if (howMany == 2) {
+      flush = Wire.read();  // consume register byte
+      int cmd = Wire.read();
+      
+      if (cmd == 2) {
+        // Left turn received - accumulate consecutive count normally
+        consecutiveTurnCount++;
+        currentCommand = cmd;
+      } else {
+        // Any other 2-byte command (right turn, etc.) - reset counter and ignore
+        consecutiveTurnCount = 0;
+      }
+    } else {
+      // Consume other command types but don't process
+      while (Wire.available()) {
+        Wire.read();
+      }
+    }
+    return;
+  }
+
   // ---- 4-byte commands: Follow or Grab ----
   if (howMany == 4) {
     flush = Wire.read();
@@ -346,6 +387,11 @@ void receiveEvent(int howMany) {
         lastError = 0;
       }
       consecutiveTurnCount = 0;
+      // Reset grab/drop counters when switching to follow command (ensure true consecutiveness)
+      static int grabCommandCount = 0;
+      static int dropCommandCount = 0;
+      grabCommandCount = 0;
+      dropCommandCount = 0;
       currentCommand = cmd;
       i2cOffset = byte3;
       i2cDirection = byte4;
@@ -409,6 +455,12 @@ void receiveEvent(int howMany) {
       } else {
         consecutiveTurnCount = 0;
       }
+      
+      // Reset grab/drop counters when receiving turn commands (ensure true consecutiveness)
+      static int grabCommandCount = 0;
+      static int dropCommandCount = 0;
+      grabCommandCount = 0;
+      dropCommandCount = 0;
 
       currentCommand = cmd;
     }
