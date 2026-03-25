@@ -724,6 +724,15 @@ void executeDropSequence() {
   // Phase 2: Execute gripper drop (lower lift and open gripper)
   executeGripper(false);
   
+  // Phase 3: Move forward for 2 seconds after drop
+  moveMotors(160, 160);
+  unsigned long postDropStartTime = millis();
+  while (millis() - postDropStartTime < 2000) {
+    // Keep moving forward
+  }
+  
+  stopMotors();
+  
   dropSequenceCompleted = true;
   currentCommand = 0;
 }
