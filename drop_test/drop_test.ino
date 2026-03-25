@@ -327,12 +327,14 @@ void executeArc(int outerSpeed, float ratio, bool isLeft) {
 
 void executeDropSequence() {
   if (dropPhase == 0) {
+    Serial.println("[DROP] Drop sequence started - Phase 0 (Motor forward)");
     moveMotors(80, 80);
     dropPhaseTime = millis();
     dropPhase = 1;
   }
   else if (dropPhase == 1) {
     if (millis() - dropPhaseTime >= DROP_MOTOR_DELAY_TIME) {
+      Serial.println("[DROP] Phase 1 complete - entering Phase 2 (Gripper drop)");
       stopMotors();
       dropPhase = 2;
     } else {
@@ -340,7 +342,9 @@ void executeDropSequence() {
     }
   }
   else if (dropPhase == 2) {
+    Serial.println("[DROP] Phase 2 - executing gripper drop");
     executeGripper(false);
+    Serial.println("[DROP] Drop sequence complete!");
     currentCommand = 0;
     dropSequenceCompleted = true;
     dropPhase = 0;
@@ -452,38 +456,6 @@ void calibrateGyro() {
   Serial.println(gyro_bias_z);
   
   Serial.println("Gyro calibration complete!");
-}
-
-// ============================================================================
-// HEADING FUSION
-// ============================================================================
-
-float getFusedHeading(float gyro_z) {
-  unsigned long now = millis();
-  float dt = (now - last_heading_time) / 1000.0;
-  last_heading_time = now;
-  
-  float gyro_heading = current_heading + (gyro_z * 57.2958) * dt;
-  
-  sensors_event_t mag;
-  lis3mdl.getEvent(&mag);
-  
-  float mag_x = (mag.magnetic.x - mag_offset_x) * mag_scale_x;
-  float mag_y = (mag.magnetic.y - mag_offset_y) * mag_scale_y;
-  
-  float mag_heading = atan2(mag_y, mag_x) * 57.2958;
-  if (mag_heading < 0) mag_heading += 360;
-  
-  float heading_diff = mag_heading - gyro_heading;
-  if (heading_diff > 180) heading_diff -= 360;
-  if (heading_diff < -180) heading_diff += 360;
-  
-  current_heading = gyro_heading + (heading_diff * (1.0 - heading_alpha));
-  
-  if (current_heading < 0) current_heading += 360;
-  if (current_heading >= 360) current_heading -= 360;
-  
-  return current_heading;
 }
 
 // ============================================================================
