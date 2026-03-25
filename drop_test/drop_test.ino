@@ -347,6 +347,15 @@ void executeDropSequence() {
     
     stopMotors();
     delay(1000);
+
+    // Phase 3: Move forward for 2 seconds after drop
+    moveMotors(160, 160);
+    unsigned long postDropStartTime = millis();
+    while (millis() - postDropStartTime < 2000) {
+      // Keep moving forward
+    }
+  
+    stopMotors();
     
     currentCommand = 0;
     dropSequenceCompleted = true;
