@@ -662,7 +662,7 @@ void executeGrabSequence(int xOffset, int yOffset) {
   // Phase 3: Backup sequence (7 seconds)
   if (grabPhase == 3) {
     unsigned long phase3_start = millis();
-    while (millis() - phase3_start < 7000) {
+    while (millis() - phase3_start < 6500) {
       moveMotors(-GRAB_BASE_SPEED, -GRAB_BASE_SPEED);  // Simple raw motor drive, no gyro correction
     }
     stopMotors();
