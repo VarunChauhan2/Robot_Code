@@ -842,12 +842,22 @@ void moveMotorsStraight(int speed, bool backward) {
   sensors_event_t accel, gyro, temp;
   lsm6ds.getEvent(&accel, &gyro, &temp);
   
-  // If rotating (gyro_z != 0), apply small correction
-  // Subtract gyro bias for accurate correction
-  float correctionFactor = 1.0 + ((gyro.gyro.z - gyro_bias_z) * 0.005);  // Scale calibrated gyro reading
+  // Get calibrated gyro reading
+  float gyro_z_calibrated = gyro.gyro.z - gyro_bias_z;
   
-  int leftSpeed = speed * correctionFactor;
-  int rightSpeed = speed / correctionFactor;
+  // Apply dead zone to filter out noise (ignore rotations < 0.3 dps)
+  if (abs(gyro_z_calibrated) < 0.3) {
+    gyro_z_calibrated = 0;
+  }
+  
+  // Apply correction with reduced sensitivity to avoid overcorrection
+  float correctionFactor = 1.0 + (gyro_z_calibrated * 0.003);  // Reduced from 0.005
+  
+  // Clamp correction factor to prevent extreme adjustments
+  correctionFactor = constrain(correctionFactor, 0.7, 1.3);
+  
+  int leftSpeed = (int)(speed * correctionFactor);
+  int rightSpeed = (int)(speed / correctionFactor);
   
   moveMotors(backward ? -leftSpeed : leftSpeed, 
              backward ? -rightSpeed : rightSpeed);
