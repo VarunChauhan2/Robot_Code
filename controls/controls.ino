@@ -368,9 +368,9 @@ void receiveEvent(int howMany) {
 
     // Handle follow command
     if (cmd == 1) {
-      // Ignore follow commands during Phase 0 (non-blocking PD feedback phase)
-      if (grabPhase == 0 && !grabSequenceCompleted) {
-        // Phase 0 is running - we're in continuous PD mode
+      // Ignore follow commands ONLY during active grab Phase 0 (non-blocking PD feedback phase)
+      if (currentCommand == 4 && grabPhase == 0 && !grabSequenceCompleted) {
+        // Currently executing grab in Phase 0 - we're using vision feedback for positioning
         return;
       }
       
@@ -435,9 +435,9 @@ void receiveEvent(int howMany) {
     }
     // Handle other commands (turns)
     else {
-      // Ignore turn commands during Phase 0 (non-blocking PD feedback phase)
-      if (grabPhase == 0 && !grabSequenceCompleted) {
-        // Phase 0 is running - don't accept turns
+      // Ignore turn commands ONLY during active grab Phase 0 (non-blocking PD feedback phase)
+      if (currentCommand == 4 && grabPhase == 0 && !grabSequenceCompleted) {
+        // Currently executing grab in Phase 0 - don't accept turns
         return;
       }
       
@@ -603,11 +603,7 @@ void executeGrabSequence(int xOffset, int yOffset) {
       if (phase0_elapsed > 5000) {
         Serial.println("[GRAB] Phase 0 timeout - proceeding to Phase 1");
       }
-      
-      // Recalibrate gyro before Phase 1 to account for temperature drift
-      Serial.println("[GRAB] Recalibrating gyro before Phase 1...");
-      calibrateGyro();
-      
+
       grabPhase = 1;
       grabPhaseTime = 0;  // Reset for next phase
       return;  // Return to main loop, blocking phases start next iteration
@@ -623,7 +619,7 @@ void executeGrabSequence(int xOffset, int yOffset) {
   if (grabPhase == 1) {
     unsigned long phase1_start = millis();
     while (millis() - phase1_start < GRAB_FINAL_PUSH_TIME) {
-      moveMotorsStraight(GRAB_BASE_SPEED, false);
+      moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);  // Simple raw motor drive, no gyro correction
     }
     stopMotors();
     grabPhase = 2;
@@ -639,7 +635,7 @@ void executeGrabSequence(int xOffset, int yOffset) {
   if (grabPhase == 3) {
     unsigned long phase3_start = millis();
     while (millis() - phase3_start < 7000) {
-      moveMotorsStraight(GRAB_BASE_SPEED, true);  // Move backward with gyro correction
+      moveMotors(-GRAB_BASE_SPEED, -GRAB_BASE_SPEED);  // Simple raw motor drive, no gyro correction
     }
     stopMotors();
     grabPhase = 4;
