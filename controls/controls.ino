@@ -83,7 +83,7 @@ unsigned long grabPhaseTime = 0;
 int lastGrabError = 0;
 
 const int GRAB_BASE_SPEED = 80;
-const int GRAB_FINAL_PUSH_TIME = 2000;
+const int GRAB_FINAL_PUSH_TIME = 2500;
 const int GRAB_X_THRESHOLD = 3;
 const int GRAB_CONFIRM_THRESHOLD = 5;  // Number of consistent grab commands before executing
 float grabKp = 0.5;
@@ -617,7 +617,7 @@ void executeGrabSequence(int xOffset, int yOffset) {
   if (grabPhase == 1) {
     unsigned long phase1_start = millis();
     while (millis() - phase1_start < GRAB_FINAL_PUSH_TIME) {
-      moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);
+      moveMotorsStraight(GRAB_BASE_SPEED, false);
     }
     stopMotors();
     grabPhase = 2;
@@ -631,10 +631,9 @@ void executeGrabSequence(int xOffset, int yOffset) {
 
   // Phase 3: Backup sequence (7 seconds)
   if (grabPhase == 3) {
-    moveMotors(-GRAB_BASE_SPEED, -GRAB_BASE_SPEED);  // Move backward
     unsigned long phase3_start = millis();
     while (millis() - phase3_start < 7000) {
-      // Keep backing up
+      moveMotorsStraight(GRAB_BASE_SPEED, true);  // Move backward with gyro correction
     }
     stopMotors();
     grabPhase = 4;
