@@ -600,7 +600,7 @@ void executeGrabSequence(int xOffset, int yOffset) {
     // Transition to Phase 1 when centered or timeout reached
     unsigned long phase0_elapsed = millis() - grabPhaseTime;
     // Require BOTH X and Y to be centered before transitioning (angle + position)
-    if ((abs(xOffset) <= 3 && yOffset <= 2) || phase0_elapsed > 5000) {  // 5 second timeout
+    if (yOffset <= 2 || phase0_elapsed > 10000) {  // 10 second timeout
       Serial.print("[GRAB] === PHASE 0 END === Elapsed: ");
       Serial.print(phase0_elapsed);
       Serial.print("ms | Final offsets: X=");
@@ -608,7 +608,7 @@ void executeGrabSequence(int xOffset, int yOffset) {
       Serial.print(" Y=");
       Serial.println(yOffset);
       
-      if (phase0_elapsed > 5000) {
+      if (phase0_elapsed > 10000) {
         Serial.println("[GRAB] Phase 0 timeout - proceeding to Phase 1");
       } else {
         Serial.println("[GRAB] Phase 0 centered - proceeding to Phase 1");
