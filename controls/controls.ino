@@ -48,9 +48,10 @@ int lastError = 0;
 
 int consecutiveTurnCount = 0;
 const int turnThreshold = 10;
-const int TURN_SETTLE_DEFAULT = 5500;  // Default settling time for all turns except turn 5 (ms)
+const int TURN_SETTLE_DEFAULT = 5300;  // Default settling time for all turns except turn 4 and 5 (ms)
+const int TURN_SETTLE_TURN4 = 5800;  // Extended settling time for 4th forward turn (ms)
 const int TURN_SETTLE_TURN5 = 7700;  // Reduced settling time for 5th forward turn (ms)
-const float TURN_ANGLE_OFFSET_RIGHT = 2.5;  // Extra degrees for right turns (undershoot compensation)
+const float TURN_ANGLE_OFFSET_RIGHT = 4;  // Extra degrees for right turns (undershoot compensation)
 const float TURN_ANGLE_OFFSET_LEFT = -2.5;  // Reduce degrees for left turns (overshoot compensation)
 
 int forward_turns_executed = 1;  // Track number of turns in forward direction
@@ -95,9 +96,14 @@ bool grabSequenceCompleted = false;
 // DROP SEQUENCE
 // ============================================================================
 
-const int DROP_MOTOR_DELAY_TIME = 1000;
+const int DROP_MOTOR_DELAY_TIME = 2500;
 
 bool dropSequenceCompleted = false;
+
+// PRE-GRAB FORWARD (when drop requested before grab)
+bool in_pre_grab_forward = false;  // Flag for moving forward before grab can be done
+unsigned long pre_grab_forward_start = 0;  // Timestamp when pre-grab forward started
+const int PRE_GRAB_FORWARD_TIME = 2000;  // 2 seconds: move forward if drop received before grab
 
 // ============================================================================
 // GYRO CALIBRATION
@@ -165,11 +171,24 @@ void setup() {
 // ============================================================================
 
 void loop() {
+  // Check if in pre-grab forward mode (move forward when drop received before grab)
+  if (in_pre_grab_forward) {
+    if (millis() - pre_grab_forward_start < PRE_GRAB_FORWARD_TIME) {
+      // Still in forward phase: move forward at base speed
+      moveMotorsStraight(baseSpeed, false);
+      return;
+    } else {
+      // 2 seconds timeout reached: stop forward movement
+      in_pre_grab_forward = false;
+      currentCommand = 0;
+    }
+  }
+
   // Check if in forward turn recovery mode (ignore Pi commands, move forward after 2nd turn)
   if (in_forward_turn_recovery) {
     if (millis() - forward_turn_recovery_start < FORWARD_TURN_RECOVERY_TIME) {
       // Still in recovery: move forward at base speed
-      moveMotors(baseSpeed, baseSpeed);
+      moveMotorsStraight(baseSpeed, false);
       return;
     } else {
       // Recovery period complete
@@ -237,8 +256,11 @@ void loop() {
         } else {
           // Execute LEFT turn in all cases (forward mode or return mode)
           
-          // Different parameters for 5th forward turn vs other turns
-          if (!in_return_mode && forward_turns_executed == 5) {
+          // Different parameters for 4th and 5th forward turns vs other turns
+          if (!in_return_mode && forward_turns_executed == 4) {
+            // 4th forward turn: extended settling time
+            executeArc(200, 0.1, true, TURN_SETTLE_TURN4);
+          } else if (!in_return_mode && forward_turns_executed == 5) {
             // 5th forward turn: reduced settling time and different ratio
             executeArc(200, -0.5, true, TURN_SETTLE_TURN5);
           } else {
@@ -363,8 +385,8 @@ void receiveEvent(int howMany) {
   if (howMany == 4) {
     flush = Wire.read();
     int cmd = Wire.read();
-    int byte3 = (signed char)Wire.read();
-    int byte4 = (signed char)Wire.read();
+    int byte3 = Wire.read();
+    int byte4 = Wire.read();
 
     // Handle follow command
     if (cmd == 1) {
@@ -372,6 +394,11 @@ void receiveEvent(int howMany) {
       if (currentCommand == 4 && grabPhase == 0 && !grabSequenceCompleted) {
         // Currently executing grab in Phase 0 - we're using vision feedback for positioning
         return;
+      }
+      
+      // If in pre-grab forward mode, exit it and process the follow command
+      if (in_pre_grab_forward) {
+        in_pre_grab_forward = false;
       }
       
       if (currentCommand != 1) {
@@ -394,8 +421,8 @@ void receiveEvent(int howMany) {
         return;
       }
 
-      grabXOffset = byte3;
-      grabYOffset = byte4;
+      grabXOffset = (signed char)byte3;
+      grabYOffset = (signed char)byte4;
       
       // Accumulate grab command confirmations
       static int grabCommandCount = 0;
@@ -415,7 +442,11 @@ void receiveEvent(int howMany) {
     // Handle drop command - accumulate confirmations
     if (cmd == 5) {
       if (!grabSequenceCompleted) {
-        // Can't drop until grab is complete
+        // Can't drop until grab is complete - move forward for 2 seconds instead
+        if (!in_pre_grab_forward) {
+          in_pre_grab_forward = true;
+          pre_grab_forward_start = millis();
+        }
         return;
       }
 
@@ -473,6 +504,7 @@ void runPDLogic(int offset, int dir) {
   float currentError = (dir == 1) ? offset : -offset;
   float derivative = currentError - lastError;
   int adjustment = (currentError * Kp) + (derivative * Kd);
+
 
   moveMotors(baseSpeed + adjustment, baseSpeed - adjustment);
   lastError = currentError;
