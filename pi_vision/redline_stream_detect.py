@@ -341,7 +341,8 @@ def detect_bullseye(hsv, frame_height, frame_width, min_area=200):
         blue_area = cv.contourArea(largest_blue)
         
         # Require minimum area for bullseye
-        if blue_area < min_area * 2:
+        # Reduce threshold slightly to handle partial circles at frame edges
+        if blue_area < min_area * 1.5:
             return False, None, None
         
         # Fit a circle to the blue contour
@@ -351,7 +352,9 @@ def detect_bullseye(hsv, frame_height, frame_width, min_area=200):
         circle_area = np.pi * blue_radius**2
         circularity = blue_area / circle_area if circle_area > 0 else 0
         
-        if circularity < 0.2 or circularity > 0.95:
+        # Relax circularity bounds to allow partial circles at frame edges
+        # Lower bound 0.15 instead of 0.2 to catch circles partially off-frame
+        if circularity < 0.15 or circularity > 0.95:
             return False, None, None
         
         # Create a circular region of interest around the blue ring
@@ -370,7 +373,8 @@ def detect_bullseye(hsv, frame_height, frame_width, min_area=200):
         red_area = cv.contourArea(largest_red)
         
         # Require minimum red area
-        if red_area < min_area * 0.5:
+        # Reduce threshold to handle partial red rings at frame edges
+        if red_area < min_area * 0.3:
             return False, None, None
         
         # Fit a circle to the red contour to get the accurate center
@@ -381,7 +385,8 @@ def detect_bullseye(hsv, frame_height, frame_width, min_area=200):
         white_area_in_circle = cv.countNonZero(white_in_red)
         
         # Verify white is present
-        has_white = white_area_in_circle > (blue_area * 0.01)
+        # Reduce threshold to handle cases where white is partially out of frame
+        has_white = white_area_in_circle > (blue_area * 0.005)
         
         if not has_white:
             return False, None, None
