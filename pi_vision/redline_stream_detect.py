@@ -617,12 +617,12 @@ def process_frame(frame, curvature_threshold=0.003, enable_bullseye=True, enable
         bullseye_distance_x = None
         bullseye_distance_y = None
         if bullseye_detected and bullseye_centroid is not None:
-            # Calculate X and Y distances from bottom center of camera frame to bullseye center
+            # Calculate X and Y distances from camera center to bullseye center
             camera_center_x = frame_width / 2
-            camera_bottom_y = frame_height
+            camera_center_y = frame_height / 2
             
             bullseye_distance_x = bullseye_centroid[0] - camera_center_x
-            bullseye_distance_y = camera_bottom_y - bullseye_centroid[1] - 30  # Distance from bottom of frame, offset by 30 to zero at minimum detection distance
+            bullseye_distance_y = camera_center_y - bullseye_centroid[1]  # Negative when below center
         
         results['bullseye_detected'] = bullseye_detected
         results['bullseye_centroid'] = bullseye_centroid
