@@ -83,7 +83,7 @@ unsigned long grabPhaseTime = 0;
 int lastGrabError = 0;
 
 const int GRAB_BASE_SPEED = 80;
-const int GRAB_FINAL_PUSH_TIME = 2500;
+const int GRAB_FINAL_PUSH_TIME = 3800;
 const int GRAB_X_THRESHOLD = 3;
 const int GRAB_CONFIRM_THRESHOLD = 5;  // Number of consistent grab commands before executing
 float grabKp = 0.5;
@@ -600,7 +600,7 @@ void executeGrabSequence(int xOffset, int yOffset) {
     // Transition to Phase 1 when centered or timeout reached
     unsigned long phase0_elapsed = millis() - grabPhaseTime;
     // Require BOTH X and Y to be centered before transitioning (angle + position)
-    if (yOffset <= 2 || phase0_elapsed > 10000) {  // 10 second timeout
+    if (yOffset <= -100 || phase0_elapsed > 10000) {  // 10 second timeout
       Serial.print("[GRAB] === PHASE 0 END === Elapsed: ");
       Serial.print(phase0_elapsed);
       Serial.print("ms | Final offsets: X=");
