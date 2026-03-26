@@ -256,11 +256,8 @@ void loop() {
         } else {
           // Execute LEFT turn in all cases (forward mode or return mode)
           
-          // Different parameters for 4th and 5th forward turns vs other turns
-          if (!in_return_mode && forward_turns_executed == 4) {
-            // 4th forward turn: extended settling time
-            executeArc(200, 0.1, true, TURN_SETTLE_TURN4);
-          } else if (!in_return_mode && forward_turns_executed == 5) {
+          // Different parameters for 5th forward LEFT turn
+          if (!in_return_mode && forward_turns_executed == 5) {
             // 5th forward turn: reduced settling time and different ratio
             executeArc(200, -0.5, true, TURN_SETTLE_TURN5);
           } else {
@@ -299,8 +296,14 @@ void loop() {
           consecutiveTurnCount = 0;
           currentCommand = 0;
         } else {
-          // In forward mode, execute RIGHT turns normally
-          executeArc(200, 0.1, false);
+          // In forward mode, execute RIGHT turns with special parameters for turn 4 only
+          if (forward_turns_executed == 4) {
+            // 4th forward turn: extended settling time
+            executeArc(200, 0.1, false, TURN_SETTLE_TURN4);
+          } else {
+            // All other turns: default parameters
+            executeArc(200, 0.1, false);
+          }
           consecutiveTurnCount = 0;
           currentCommand = 0;
           forward_turns_executed++;
