@@ -622,7 +622,7 @@ def process_frame(frame, curvature_threshold=0.003, enable_bullseye=True, enable
             camera_bottom_y = frame_height
             
             bullseye_distance_x = bullseye_centroid[0] - camera_center_x
-            bullseye_distance_y = camera_bottom_y - bullseye_centroid[1]  # Distance from bottom of frame
+            bullseye_distance_y = camera_bottom_y - bullseye_centroid[1] - 30  # Distance from bottom of frame, offset by 30 to zero at minimum detection distance
         
         results['bullseye_detected'] = bullseye_detected
         results['bullseye_centroid'] = bullseye_centroid
