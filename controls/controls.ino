@@ -584,6 +584,7 @@ void executeGrabSequence(int xOffset, int yOffset) {
     // Initialize phase 0 timer on first entry
     if (grabPhaseTime == 0) {
       grabPhaseTime = millis();
+      Serial.println("[GRAB] === PHASE 0 START ===");
     }
 
     float currentError = xOffset;
@@ -600,8 +601,17 @@ void executeGrabSequence(int xOffset, int yOffset) {
     unsigned long phase0_elapsed = millis() - grabPhaseTime;
     // Require BOTH X and Y to be centered before transitioning (angle + position)
     if ((abs(xOffset) <= 3 && yOffset <= 2) || phase0_elapsed > 5000) {  // 5 second timeout
+      Serial.print("[GRAB] === PHASE 0 END === Elapsed: ");
+      Serial.print(phase0_elapsed);
+      Serial.print("ms | Final offsets: X=");
+      Serial.print(xOffset);
+      Serial.print(" Y=");
+      Serial.println(yOffset);
+      
       if (phase0_elapsed > 5000) {
         Serial.println("[GRAB] Phase 0 timeout - proceeding to Phase 1");
+      } else {
+        Serial.println("[GRAB] Phase 0 centered - proceeding to Phase 1");
       }
 
       grabPhase = 1;
@@ -617,11 +627,29 @@ void executeGrabSequence(int xOffset, int yOffset) {
 
   // Phase 1: Final push forward (2 seconds straight)
   if (grabPhase == 1) {
+    Serial.println("[GRAB] === PHASE 1 START === (2.5 second final push)");
     unsigned long phase1_start = millis();
+    unsigned long last_print = phase1_start;
+    
     while (millis() - phase1_start < GRAB_FINAL_PUSH_TIME) {
       moveMotors(GRAB_BASE_SPEED, GRAB_BASE_SPEED);  // Simple raw motor drive, no gyro correction
+      
+      // Print progress every 500ms
+      unsigned long now = millis();
+      if (now - last_print >= 500) {
+        Serial.print("[GRAB] Phase 1 progress: ");
+        Serial.print(now - phase1_start);
+        Serial.println("ms");
+        last_print = now;
+      }
     }
+    
     stopMotors();
+    unsigned long phase1_elapsed = millis() - phase1_start;
+    Serial.print("[GRAB] === PHASE 1 END === Total: ");
+    Serial.print(phase1_elapsed);
+    Serial.println("ms");
+    
     grabPhase = 2;
   }
 
