@@ -32,7 +32,6 @@ const int ARDUINO_I2C_ADDR = 0x08;
 volatile int currentCommand = 0;
 volatile int i2cOffset = 0;
 volatile int i2cDirection = 0;
-unsigned long lastHeartbeat = 0;
 
 // ============================================================================
 // LINE FOLLOWING (PD CONTROL)
@@ -158,7 +157,6 @@ void setup() {
   // Calibrate gyro
   calibrateGyro();
 
-  lastHeartbeat = millis();
   Serial.println("System Ready.");
 }
 
@@ -167,12 +165,6 @@ void setup() {
 // ============================================================================
 
 void loop() {
-  // Heartbeat safety: stop motors if Pi communication lost
-  if (millis() - lastHeartbeat > 1000) {
-    stopMotors();
-    return;
-  }
-
   // Check if in forward turn recovery mode (ignore Pi commands, move forward after 2nd turn)
   if (in_forward_turn_recovery) {
     if (millis() - forward_turn_recovery_start < FORWARD_TURN_RECOVERY_TIME) {
@@ -315,7 +307,6 @@ void loop() {
 // ============================================================================
 
 void receiveEvent(int howMany) {
-  lastHeartbeat = millis();
   int flush;
 
   // If in forward turn recovery mode, ignore all Pi commands
