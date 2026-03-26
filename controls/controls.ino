@@ -787,10 +787,10 @@ void moveMotors(int left, int right) {
 }
 
 void stopMotors() {
-  digitalWrite(ain1, HIGH);
-  digitalWrite(ain2, HIGH);
-  digitalWrite(bin1, HIGH);
-  digitalWrite(bin2, HIGH);
+  // Cut PWM to 0 - this is the safe way to stop
+  // Do NOT pull all direction pins HIGH as that shorts the H-bridge!
+  analogWrite(pwma, 0);
+  analogWrite(pwmb, 0);
 }
 
 // ============================================================================
