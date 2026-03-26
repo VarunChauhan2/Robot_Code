@@ -598,10 +598,16 @@ void executeGrabSequence(int xOffset, int yOffset) {
 
     // Transition to Phase 1 when centered or timeout reached
     unsigned long phase0_elapsed = millis() - grabPhaseTime;
-    if (abs(yOffset) <= 2 || phase0_elapsed > 5000) {  // 5 second timeout
+    // Require BOTH X and Y to be centered before transitioning (angle + position)
+    if ((abs(xOffset) <= 3 && yOffset <= 2) || phase0_elapsed > 5000) {  // 5 second timeout
       if (phase0_elapsed > 5000) {
         Serial.println("[GRAB] Phase 0 timeout - proceeding to Phase 1");
       }
+      
+      // Recalibrate gyro before Phase 1 to account for temperature drift
+      Serial.println("[GRAB] Recalibrating gyro before Phase 1...");
+      calibrateGyro();
+      
       grabPhase = 1;
       grabPhaseTime = 0;  // Reset for next phase
       return;  // Return to main loop, blocking phases start next iteration
@@ -850,8 +856,10 @@ void moveMotorsStraight(int speed, bool backward) {
     gyro_z_calibrated = 0;
   }
   
-  // Apply correction with reduced sensitivity to avoid overcorrection
-  float correctionFactor = 1.0 + (gyro_z_calibrated * 0.003);  // Reduced from 0.005
+  // Apply correction - INVERTED from before!
+  // Positive gyro (clockwise/right veer): reduce left speed, increase right speed
+  // Negative gyro (counterclockwise/left veer): increase left speed, reduce right speed
+  float correctionFactor = 1.0 - (gyro_z_calibrated * 0.003);  // INVERTED sign
   
   // Clamp correction factor to prevent extreme adjustments
   correctionFactor = constrain(correctionFactor, 0.7, 1.3);
