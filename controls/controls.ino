@@ -49,7 +49,7 @@ int lastError = 0;
 int consecutiveTurnCount = 0;
 const int turnThreshold = 10;
 const int TURN_SETTLE_DEFAULT = 5300;  // Default settling time for all turns except turn 4 and 5 (ms)
-const int TURN_SETTLE_TURN4 = 5800;  // Extended settling time for 4th forward turn (ms)
+const int TURN_SETTLE_TURN4 = 6500;  // Extended settling time for 4th forward turn (ms)
 const int TURN_SETTLE_TURN5 = 7700;  // Reduced settling time for 5th forward turn (ms)
 const float TURN_ANGLE_OFFSET_RIGHT = 4;  // Extra degrees for right turns (undershoot compensation)
 const float TURN_ANGLE_OFFSET_LEFT = -2.5;  // Reduce degrees for left turns (overshoot compensation)
@@ -96,7 +96,7 @@ bool grabSequenceCompleted = false;
 // DROP SEQUENCE
 // ============================================================================
 
-const int DROP_MOTOR_DELAY_TIME = 2500;
+const int DROP_MOTOR_DELAY_TIME = 3500;
 
 bool dropSequenceCompleted = false;
 
@@ -690,6 +690,8 @@ void executeGrabSequence(int xOffset, int yOffset) {
 
   // Phase 2: Execute gripper (close gripper and raise lift)
   if (grabPhase == 2) {
+    gripperServo.attach(10);  // Re-attach servo to ensure it's responsive
+    liftServo.attach(11);
     executeGripper(true);
     grabPhase = 3;
   }
